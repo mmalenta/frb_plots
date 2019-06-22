@@ -104,14 +104,11 @@ class Plotter:
         
         
         # Read original data
-        basename = filename[:-4]
         fildata = np.reshape(np.fromfile(beam_dir + filename, dtype='B')[headsize:], (-1, nchans)).T
         print("Read %d time samples" % (fildata.shape[1]))
         fildata = fildata * mask[:, np.newaxis]
         # Time average the data
-        timesamples = int(np.floor(fildata.shape[1] / self._timeavg) * self._timeavg)
-        filtimeavg = fildata[:, :timesamples].reshape(fildata.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2)
-        
+        timesamples = int(np.floor(fildata.shape[1] / self._timeavg) * self._timeavg)        
         
         # Frequency average the data
         frequencies = int(np.floor(fildata.shape[0] / self._freqavg) * self._freqavg)
@@ -130,24 +127,13 @@ class Plotter:
         fmt = lambda x: "{:.2f}".format(x)
         
         # Prepare the frequency ticks
-        orig_freq_pos = np.linspace(0, 4096, num=9)
-        orig_freq_pos[-1] = orig_freq_pos[-1] - 1
         avg_freq_pos = np.linspace(0, int(nchans / self._freqavg), num=9)
-        avg_freq_pos[-1] = avg_freq_pos[-1] - 1
-        
-        orig_freq_label = self._ftop + orig_freq_pos * self._fband
-        orig_freq_label_str = [fmt(label) for label in orig_freq_label]
-        
+        avg_freq_pos[-1] = avg_freq_pos[-1] - 1       
         avg_freq_label = self._ftop + avg_freq_pos * self._fband * self._freqavg
         avg_freq_label_str = [fmt(label) for label in avg_freq_label]
         
         # Prepare the time ticks
-        orig_time_pos = np.linspace(0, fildata.shape[1], num=9)
         avg_time_pos = np.linspace(0, (int)(timesamples / self._timeavg), num=5)
-        
-        orig_time_label = orig_time_pos * self._tsamp
-        orig_time_label_str = [fmt(label) for label in orig_time_label]
-        
         avg_time_label = avg_time_pos * self._tsamp * self._timeavg
         avg_time_label_str = [fmt(label) for label in avg_time_label]
         
@@ -275,6 +261,7 @@ class Watcher:
         while self._watching:
             
             start_plot = time.time()
+            print (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
             
             for ibeam in np.arange(self._nbeams):
                 
@@ -289,6 +276,7 @@ class Watcher:
                         new_fil_files.append([ff.name, ff.stat().st_mtime])
 
                 new_len = len(new_fil_files)
+                print (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
                 print("Found %d new filterbank files for beam %d" % (new_len, ibeam))
 
                 if new_len > 0:
@@ -306,6 +294,7 @@ class Watcher:
                         print("Finding a match for file %s" % (new_ff[0]))
                         
                         with open(beam_dir + new_ff[0], mode='rb') as file: # b is important -> binary
+                            # Unused, but vital to skipping first 114 bytes
                             skip_head = file.read(114)
                             mjdtime = struct.unpack('d', file.read(8))[0]
                         
@@ -322,16 +311,20 @@ class Watcher:
                             
                             if self._verbose:
                                 print("Found %d matching candidates" % (selected.shape[0]))
-                            
-                            highest_snr = selected.loc[selected['SNR'].idxmax()]
+
+                            highest_snr = selected.iloc[selected['SNR'].idxmax()]
                             selected['Beam'] = full_beam
                             selected['RA'] = beam_ra
                             selected['Dec'] = beam_dec
                             selected['File'] = new_ff[0]
                             selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + str(highest_snr['DM']) + '_beam_' + str(ibeam) + '.jpg'
-                            print(cand_file[0])
-                            with open(beam_dir + 'Plots/used_candidates.spccl.extra' , 'a') as f:
+                            highest_snr = selected.iloc[selected['SNR'].idxmax()]
+                            with open(beam_dir + 'Plots/used_candidates.spccl.extra.full' , 'a') as f:
                                 selected.to_csv(f, sep='\t', header=False, float_format="%.4f", index=False, index_label=False)
+
+                            with open(beam_dir + 'Plots/used_candidates.spccl.extra' , 'a') as f:
+                                f.write("%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
+                            
                             self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, self._nchans, highest_snr, full_beam)
                         else:
                             print("Something went wrong - did not find matching candidates")
@@ -381,9 +374,9 @@ class Watcher:
         #spccl_thread.start()
         fil_thread = threading.Thread(target=self.GetNewFilFiles)
         fil_thread.start()
-        self._watching = False
+        fil_thread.join()
+        
         #spccl_thread.join()
-        #fil_thread.join()
 
 
 def main():
