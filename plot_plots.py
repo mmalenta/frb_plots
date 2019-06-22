@@ -381,7 +381,6 @@ class Watcher:
         #spccl_thread.start()
         fil_thread = threading.Thread(target=self.GetNewFilFiles)
         fil_thread.start()
-        time.sleep(10)
         self._watching = False
         #spccl_thread.join()
         #fil_thread.join()
