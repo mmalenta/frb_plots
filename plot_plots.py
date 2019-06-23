@@ -271,6 +271,7 @@ class Watcher:
             for ibeam in np.arange(self._nbeams):
                 
                 beam_dir = self._directory + '/beam0' + str(ibeam) + '/'
+                new_fil_files = []
 
                 if os.path.isdir(beam_dir):
 
@@ -295,6 +296,8 @@ class Watcher:
                         
                         cand_dir = self._directory + '/beam0' + str(ibeam) + '/'
                         cand_file = glob.glob(cand_dir + '/*.spccl')
+
+
 
                         while (len(cand_file) == 0):
                             time.sleep(1)
@@ -344,12 +347,10 @@ class Watcher:
                                 self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, self._nchans, highest_snr, full_beam, ibeam)
                             else:
                                 print("Something went wrong - did not find matching candidates")
+                                
                 else:
                     if (self._verbose):
                         print("No directory %s" % (beam_dir))
-
-
-                    new_fil_files = []
                     
             end_plot = time.time()
             
