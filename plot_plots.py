@@ -398,8 +398,24 @@ class Watcher:
 
 def main():
     
-    plotdir = sys.argv[1]
-    events_file = sys.argv[2]
+    basedir = sys.argv[1]
+    events_file = 'pipeline_events.log'
+
+    utc_dirs = []
+
+    for inbase in os.listdir(basedir):
+        full_inbase = os.path.join(basedir, inbase)
+        if os.path.isdir(full_inbase):
+            utc_dirs.append(full_inbase)
+    
+
+    latest_utc_dir = max(utc_dirs, key=os.path.getmtime)
+
+    plotdir = latest_utc_dir + '/'
+
+    print(utc_dirs)
+    print(latest_utc_dir)
+
     print("Will use directory %s" % (plotdir))
     watcher = Watcher(plotdir, events_file, True, True)
     watcher.Watch()
