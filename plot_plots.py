@@ -297,8 +297,6 @@ class Watcher:
                         cand_dir = self._directory + '/beam0' + str(ibeam) + '/'
                         cand_file = glob.glob(cand_dir + '/*.spccl')
 
-
-
                         while (len(cand_file) == 0):
                             time.sleep(1)
                             cand_file = glob.glob(cand_dir + '/*.spccl')
@@ -306,7 +304,7 @@ class Watcher:
                         print(cand_file)
                         beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
                         
-                        mjd_pad = 0.5 / 86400.0 
+                        mjd_pad = 0.5 / 86400.0
                         
                         #print(fil_latest)
                         for new_ff in new_fil_files:
@@ -336,10 +334,14 @@ class Watcher:
                                 selected['RA'] = beam_ra
                                 selected['Dec'] = beam_dec
                                 selected['File'] = new_ff[0]
-                                selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + str(highest_snr['DM']) + '_beam_' + str(full_beam) + '.jpg'
+
+                                fmtdm = "{:.2f}".format(highest_snr['DM'])
+
+                                selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + fmtdm + '_beam_' + str(full_beam) + '.jpg'
                                 highest_snr = selected.iloc[selected['SNR'].idxmax()]
                                 with open(beam_dir + 'Plots/used_candidates.spccl.extra.full' , 'a') as f:
                                     selected.to_csv(f, sep='\t', header=False, float_format="%.4f", index=False, index_label=False)
+
 
                                 with open(beam_dir + 'Plots/used_candidates.spccl.extra' , 'a') as f:
                                     f.write("%d\t%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (0, highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
