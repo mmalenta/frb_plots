@@ -296,6 +296,9 @@ class Watcher:
                         cand_dir = self._directory + '/beam0' + str(ibeam) + '/'
                         cand_file = glob.glob(cand_dir + '/*.spccl')
 
+                        while (len(cand_file) == 0):
+                            time.sleep(1)
+                            cand_file = glob.glob(cand_dir + '/*.spccl')
 
                         print(cand_file)
                         beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
