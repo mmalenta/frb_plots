@@ -224,27 +224,32 @@ class Watcher:
             
             for ibeam in np.arange(self._nbeams):
                 beam_dir = self._directory + '/beam0' + str(ibeam) + '/'
-                cand_file = glob.glob(beam_dir + '/*.spccl')
-                print(cand_file)
-                if (len(cand_file) != 0):
-                    cand_file = cand_file[0]
-                    if (self._verbose):
-                        print("Found candidate file for beam %d" % (ibeam))
-                        print(cand_file)
+                
+                if os.path.isdir(beam_dir):
 
-                    skipcands = int(1 + total_cands[ibeam])
-                    print(skipcands)
-                    beam_cands = pd.read_csv(cand_file, sep='\s+', names=self._header_names, skiprows=skipcands)
-                    beam_cands['Beam'] = ibeam
-                    new_cands[ibeam] = beam_cands.shape[0]
-                    total_cands[ibeam] = total_cands[ibeam] + new_cands[ibeam]
-                    
-                    full_cands = full_cands.append(beam_cands)
-                    
+                    cand_file = glob.glob(beam_dir + '/*.spccl')
+                    print(cand_file)
+                    if (len(cand_file) != 0):
+                        cand_file = cand_file[0]
+                        if (self._verbose):
+                            print("Found candidate file for beam %d" % (ibeam))
+                            print(cand_file)
+
+                        skipcands = int(1 + total_cands[ibeam])
+                        print(skipcands)
+                        beam_cands = pd.read_csv(cand_file, sep='\s+', names=self._header_names, skiprows=skipcands)
+                        beam_cands['Beam'] = ibeam
+                        new_cands[ibeam] = beam_cands.shape[0]
+                        total_cands[ibeam] = total_cands[ibeam] + new_cands[ibeam]
+                        
+                        full_cands = full_cands.append(beam_cands)
+                        
+                        if (self._verbose):
+                            print("Found %d new candidates for beam %d" % (new_cands[ibeam], ibeam))
+                            print("Total of %d candidates for beam %d" % (total_cands[ibeam], ibeam))
+                else:
                     if (self._verbose):
-                        print("Found %d new candidates for beam %d" % (new_cands[ibeam], ibeam))
-                        print("Total of %d candidates for beam %d" % (total_cands[ibeam], ibeam))
-            
+                        print("No directory %s" % (beam_dir))
             self._plotter.PlotFullCands(full_cands)
             
             time.sleep(5)
@@ -265,70 +270,77 @@ class Watcher:
             
             for ibeam in np.arange(self._nbeams):
                 
-                full_beam = self._beam_info['beam'].values[ibeam]
-                beam_ra = self._beam_info['ra'].values[ibeam]
-                beam_dec = self._beam_info['dec'].values[ibeam]
-                
                 beam_dir = self._directory + '/beam0' + str(ibeam) + '/'
-                fil_files = os.scandir(beam_dir)
-                for ff in fil_files:
-                    if ((ff.name.endswith('fil')) & (ff.stat().st_mtime > fil_latest[ibeam])):
-                        new_fil_files.append([ff.name, ff.stat().st_mtime])
 
-                new_len = len(new_fil_files)
-                print (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
-                print("Found %d new filterbank files for beam %d" % (new_len, ibeam))
+                if os.path.isdir(beam_dir):
 
-                if new_len > 0:
-                    fil_latest[ibeam] = max(new_fil_files, key = lambda nf: nf[1])[1]
+                    full_beam = self._beam_info['beam'].values[ibeam]
+                    beam_ra = self._beam_info['ra'].values[ibeam]
+                    beam_dec = self._beam_info['dec'].values[ibeam]
                     
-                    cand_dir = self._directory + '/beam0' + str(ibeam) + '/'
-                    cand_file = glob.glob(cand_dir + '/*.spccl')
-                    print(cand_file)
-                    beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
-                    
-                    mjd_pad = 0.5 / 86400.0 
-                    
-                    #print(fil_latest)
-                    for new_ff in new_fil_files:
-                        print("Finding a match for file %s" % (new_ff[0]))
+                    fil_files = os.scandir(beam_dir)
+                    for ff in fil_files:
+                        if ((ff.name.endswith('fil')) & (ff.stat().st_mtime > fil_latest[ibeam])):
+                            new_fil_files.append([ff.name, ff.stat().st_mtime])
+
+                    new_len = len(new_fil_files)
+                    print (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
+                    print("Found %d new filterbank files for beam %d" % (new_len, ibeam))
+
+                    if new_len > 0:
+                        fil_latest[ibeam] = max(new_fil_files, key = lambda nf: nf[1])[1]
                         
-                        with open(beam_dir + new_ff[0], mode='rb') as file: # b is important -> binary
-                            # Unused, but vital to skipping first 114 bytes
-                            skip_head = file.read(114)
-                            mjdtime = struct.unpack('d', file.read(8))[0]
+                        cand_dir = self._directory + '/beam0' + str(ibeam) + '/'
+                        cand_file = glob.glob(cand_dir + '/*.spccl')
+                        print(cand_file)
+                        beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
                         
-                        filsplit = new_ff[0][:-4].split('_')
-                        filtime = filsplit[0] + '-' + filsplit[1] + '-' + filsplit[2] + 'T' + filsplit[3]
-                        aptime = Time(filtime, format='isot', scale='utc')
-                        mjdtimeutc = aptime.mjd                        
-                        print("UTC: %s -> MJD: %.8f" % (new_ff[0][:-4], mjdtime))
-                        print("%.10f -> %.10f, %.10f" % (mjdtime, mjdtime + 2 * mjd_pad, mjdtimeutc))
+                        mjd_pad = 0.5 / 86400.0 
                         
-                        selected = (beam_cands.loc[(beam_cands['MJD'] >= mjdtime) & (beam_cands['MJD'] <= mjdtime + 2 * mjd_pad)]).reset_index()
-                        #self._plotter.PlotDist(new_ff[0], selected)
-                        if (selected.shape[0] > 0):
+                        #print(fil_latest)
+                        for new_ff in new_fil_files:
+                            print("Finding a match for file %s" % (new_ff[0]))
                             
-                            if self._verbose:
-                                print("Found %d matching candidates" % (selected.shape[0]))
-
-                            highest_snr = selected.iloc[selected['SNR'].idxmax()]
-                            selected['Beam'] = full_beam
-                            selected['RA'] = beam_ra
-                            selected['Dec'] = beam_dec
-                            selected['File'] = new_ff[0]
-                            selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + str(highest_snr['DM']) + '_beam_' + str(ibeam) + '.jpg'
-                            highest_snr = selected.iloc[selected['SNR'].idxmax()]
-                            with open(beam_dir + 'Plots/used_candidates.spccl.extra.full' , 'a') as f:
-                                selected.to_csv(f, sep='\t', header=False, float_format="%.4f", index=False, index_label=False)
-
-                            with open(beam_dir + 'Plots/used_candidates.spccl.extra' , 'a') as f:
-                                f.write("%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
+                            with open(beam_dir + new_ff[0], mode='rb') as file: # b is important -> binary
+                                # Unused, but vital to skipping first 114 bytes
+                                skip_head = file.read(114)
+                                mjdtime = struct.unpack('d', file.read(8))[0]
                             
-                            self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, self._nchans, highest_snr, full_beam)
-                        else:
-                            print("Something went wrong - did not find matching candidates")
-                
+                            filsplit = new_ff[0][:-4].split('_')
+                            filtime = filsplit[0] + '-' + filsplit[1] + '-' + filsplit[2] + 'T' + filsplit[3]
+                            aptime = Time(filtime, format='isot', scale='utc')
+                            mjdtimeutc = aptime.mjd                        
+                            print("UTC: %s -> MJD: %.8f" % (new_ff[0][:-4], mjdtime))
+                            print("%.10f -> %.10f, %.10f" % (mjdtime, mjdtime + 2 * mjd_pad, mjdtimeutc))
+                            
+                            selected = (beam_cands.loc[(beam_cands['MJD'] >= mjdtime) & (beam_cands['MJD'] <= mjdtime + 2 * mjd_pad)]).reset_index()
+                            #self._plotter.PlotDist(new_ff[0], selected)
+                            if (selected.shape[0] > 0):
+                                
+                                if self._verbose:
+                                    print("Found %d matching candidates" % (selected.shape[0]))
+
+                                highest_snr = selected.iloc[selected['SNR'].idxmax()]
+                                selected['Beam'] = full_beam
+                                selected['RA'] = beam_ra
+                                selected['Dec'] = beam_dec
+                                selected['File'] = new_ff[0]
+                                selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + str(highest_snr['DM']) + '_beam_' + str(ibeam) + '.jpg'
+                                highest_snr = selected.iloc[selected['SNR'].idxmax()]
+                                with open(beam_dir + 'Plots/used_candidates.spccl.extra.full' , 'a') as f:
+                                    selected.to_csv(f, sep='\t', header=False, float_format="%.4f", index=False, index_label=False)
+
+                                with open(beam_dir + 'Plots/used_candidates.spccl.extra' , 'a') as f:
+                                    f.write("%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
+                                
+                                self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, self._nchans, highest_snr, full_beam)
+                            else:
+                                print("Something went wrong - did not find matching candidates")
+                else:
+                    if (self._verbose):
+                        print("No directory %s" % (beam_dir))
+
+
                     new_fil_files = []
                     
             end_plot = time.time()
@@ -360,11 +372,16 @@ class Watcher:
             print("Creating plots output directory")
             
             for ibeam in np.arange(6):
-                try:
-                    os.mkdir(self._directory + '/beam0' + str(ibeam) + '/Plots')
-                except FileExistsError:
+                beam_dir = self._directory + '/beam0' + str(ibeam) + '/'
+                if os.path.isdir(beam_dir):
+                    try:
+                        os.mkdir(self._directory + '/beam0' + str(ibeam) + '/Plots')
+                    except FileExistsError:
+                        if (self._verbose):
+                            print("Directory already exists")
+                else:
                     if (self._verbose):
-                        print("Directory already exists")
+                        print("No directory %s" % (beam_dir))
             
         if (self._verbose):
             print("Parsing log files")
