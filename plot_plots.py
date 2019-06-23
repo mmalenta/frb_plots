@@ -288,10 +288,15 @@ class Watcher:
                     print("Found %d new filterbank files for beam %d" % (new_len, ibeam))
 
                     if new_len > 0:
+
+                        # Will hopefully get .spccl written
+                        time.sleep(5)
                         fil_latest[ibeam] = max(new_fil_files, key = lambda nf: nf[1])[1]
                         
                         cand_dir = self._directory + '/beam0' + str(ibeam) + '/'
                         cand_file = glob.glob(cand_dir + '/*.spccl')
+
+
                         print(cand_file)
                         beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
                         
@@ -331,7 +336,7 @@ class Watcher:
                                     selected.to_csv(f, sep='\t', header=False, float_format="%.4f", index=False, index_label=False)
 
                                 with open(beam_dir + 'Plots/used_candidates.spccl.extra' , 'a') as f:
-                                    f.write("%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
+                                    f.write("%d\t%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (0, highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
                                 
                                 self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, self._nchans, highest_snr, full_beam, ibeam)
                             else:
