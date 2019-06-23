@@ -361,8 +361,8 @@ class Watcher:
             log_info.loc[len(log_info)] = ({'beam':int(beam['fbfuse_id'].split('bf')[-1]),
                                     'ra':beam['ra_hms'],
                                     'dec':beam['dec_dms']})
-        log_start_utc = json.loads(start_event)['datetime']
-        log_end_utc = json.loads(end_event)['datetime']
+        log_start_utc = json.loads(start_event)['utc']
+        log_end_utc = json.loads(end_event)['utc']
         self._beam_info = log_info
     
     def Watch(self):
