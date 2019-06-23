@@ -353,7 +353,7 @@ class Watcher:
     def GetLogs(self, logfile):
         with open((self._directory + logfile)) as f:
             lines = f.readlines()
-            start_event = lines[-2]
+            start_event = lines[0]
             end_event = lines[-1]
 
         log_info = pd.DataFrame(columns=['beam', 'ra', 'dec'])
