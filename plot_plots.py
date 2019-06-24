@@ -40,6 +40,7 @@ class Plotter:
 
         # .spccl plots parameters
         # Plot last 120 seconds of data
+        self._spccl_refresh_s = 30.0
         self._spccl_length_s = 120.0
         self._spccl_length_mjd = self._spccl_length_s / 86400.0
         self._spccl_pad = 2.5 / 86400.0
@@ -110,6 +111,8 @@ class Plotter:
         sccbar.ax.set_yticklabels(['0', '1', '2', '3', '4', '5'])
         figspccl.savefig(self._plotdir + '/full_spccl_candidates.png')
         plt.close(figspccl)
+
+        time.sleep(self._spccl_refresh_s)
     
     def PlotExtractedCand(self, beam_dir, filename, headsize, nchans, properties, ibeam=0, nodebeam=0):
         
@@ -144,8 +147,12 @@ class Plotter:
         filbothavg = filfreqavg.reshape(filfreqavg.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
         
         notzero = (filbothavg[:,0])[np.where(filbothavg[:,0]!=0)[0]]
-        datamean = np.mean(notzero)
-        datastd = np.std(notzero)
+        
+        filband = np.mean(filbothavg, axis=1)
+        filbothavg = filbothavg - filband[:, np.newaxis]
+
+        datamean = np.mean(filbothavg[:, 0])
+        datastd = np.std(filbothavg[:, 0])        
 
         ctop = int(np.ceil(datamean + 1.25 * datastd))
         cbottom = int(np.floor(datamean - 0.5 * datastd))
@@ -276,14 +283,13 @@ class Watcher:
                         print("No directory %s" % (beam_dir))
             self._plotter.PlotSpcclCands(full_cands)
             
-            time.sleep(5)
-            
     
     def GetNewFilFiles(self):
         if self._verbose:
             print("Watching for .fil files")
         
         fil_latest = np.zeros(6)
+        fil_latest_mjd = np.zeros(6)
         new_fil_files = []
         
         
@@ -315,29 +321,48 @@ class Watcher:
                     if new_len > 0:
 
                         # Will hopefully get .spccl written
-                        time.sleep(5)
                         fil_latest[ibeam] = max(new_fil_files, key = lambda nf: nf[1])[1]
-                        
+
+                        latest_fil_mjd = 0.0
+                        for new_ff in new_fil_files:
+                            with open(beam_dir + new_ff[0], mode='rb') as file:
+                                # Unused, but vital to skipping first 114 bytes
+                                skip_head = file.read(114)
+                                mjdtime = struct.unpack('d', file.read(8))[0]
+                                if mjdtime > latest_fil_mjd:
+                                    latest_fil_mjd = mjdtime
+
+                        print("Latest .fil file MJD: %.10f" % (latest_fil_mjd))
+
                         cand_dir = self._directory + '/beam0' + str(ibeam) + '/'
                         cand_file = glob.glob(cand_dir + '/*.spccl')
 
                         while (len(cand_file) == 0):
+                            if self._verbose:
+                                print("No .spccl file for beam %d yet..." % (ibeam))
                             time.sleep(0.125)
                             cand_file = glob.glob(cand_dir + '/*.spccl')
 
-                        while os.path.getmtime(cand_file[0]) < fil_latest[ibeam]:
-                            time.sleep(0.125)
-                            cand_file = glob.glob(cand_dir + '/*.spccl')
 
                         beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
-                        
+                        latest_cand_mjd = beam_cands.tail(1)['MJD'].values[0]
+                        print("Latest candidate MJD: %.10f" % (latest_cand_mjd))
+
+                        while latest_cand_mjd < latest_fil_mjd:
+                            time.sleep(0.1)
+                            beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
+                            latest_cand_mjd = beam_cands.tail(1)['MJD'].values[0]
+                            if self._verbose:
+                                print("Waiting for an updated .spccl file for beam %d..." % (ibeam))
+                                print("Latest candidate MJD: %.10f" % (latest_cand_mjd))
+
                         mjd_pad = 0.5 / 86400.0
                         
                         #print(fil_latest)
                         for new_ff in new_fil_files:
                             print("Finding a match for file %s" % (new_ff[0]))
                             
-                            with open(beam_dir + new_ff[0], mode='rb') as file: # b is important -> binary
+                            with open(beam_dir + new_ff[0], mode='rb') as file:
                                 # Unused, but vital to skipping first 114 bytes
                                 skip_head = file.read(114)
                                 mjdtime = struct.unpack('d', file.read(8))[0]
@@ -424,12 +449,12 @@ class Watcher:
             print("Parsing log files")
             self.GetLogs(self._events_file)
         
-        spccl_thread = threading.Thread(target=self.GetNewSpcclFiles)
-        spccl_thread.start()
+        #spccl_thread = threading.Thread(target=self.GetNewSpcclFiles)
+        #spccl_thread.start()
         fil_thread = threading.Thread(target=self.GetNewFilFiles)
         fil_thread.start()
         fil_thread.join()
-        spccl_thread.join()
+        #spccl_thread.join()
 
 
 def main():
