@@ -227,7 +227,7 @@ class Watcher:
         self._nbeams = 6
         self._header_names = ['MJD', 'DM', 'Width', 'SNR']
         self._start_time = time.time()
-        self._mjd_pad = 0.5 / 86400.0
+        self._mjd_pad = 1.0 / 86400.0
         self._beam_info = pd.DataFrame()
         
         self._plot_length = 120.0 # how many seconds of data to plot
@@ -356,7 +356,7 @@ class Watcher:
                                 print("Waiting for an updated .spccl file for beam %d..." % (ibeam))
                                 print("Latest candidate MJD: %.10f" % (latest_cand_mjd))
 
-                        mjd_pad = 0.5 / 86400.0
+                        mjd_pad = 1.0 / 86400.0
                         
                         #print(fil_latest)
                         for new_ff in new_fil_files:
