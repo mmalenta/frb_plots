@@ -403,13 +403,15 @@ class Watcher:
 
                                 selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + fmtdm + '_beam_' + str(full_beam) + '.jpg'
                                 highest_snr = selected.iloc[selected['SNR'].idxmax()]
+
+                                self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, self._nchans, highest_snr, full_beam, ibeam)
+
                                 with open(beam_dir + 'Plots/used_candidates.spccl.extra.full' , 'a') as f:
                                     selected.to_csv(f, sep='\t', header=False, float_format="%.4f", index=False, index_label=False)
 
                                 with open(beam_dir + 'Plots/used_candidates.spccl.extra' , 'a') as f:
                                     f.write("%d\t%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (0, highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
                                 
-                                self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, self._nchans, highest_snr, full_beam, ibeam)
                             else:
                                 print("Something went wrong - did not find matching candidates")
                                 
