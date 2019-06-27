@@ -47,47 +47,78 @@ class Plotter:
 
         # Dedispersion parameters
         self._disp_const = 4.15e+03 * (1.0 / (self._fbottom * self._fbottom) - 1.0 / (self._ftop * self._ftop)) # in s per unit DM
-        self._cand_pad_s = 1.0
+        self._cand_pad_s = 0.5
         self._dedisp_pad_s = self._cand_pad_s / 2.0
+        self._dedisp_bands = int(self._nchans / self._freqavg)
 
         if self._verbose:
             print("Starting the plotter up")
     
-    def Dedisperse(self, inputdata, dm):
+    def Dedisperse(self, inputdata, dm, outbands):
     
         dm_start = time.time()
 
-        outbands = 1
         perband = int(self._nchans / outbands)
-        fulldelay = self._disp_const * dm
-        fullsampdelay = int(np.ceil(fulldelay / self._tsamp))
-        padding = np.ceil(self._dedisp_pad_s / self._tsamp)
-        sampuse = int(padding * 2) + fullsampdelay
-        sampout = int(padding * 2)
+        print(perband)
+        padding = 0
+        sampout = 0
         
-        dedispersed = np.zeros((outbands, sampout))
+        lastbandtop = self._ftop + (outbands - 1) * perband * self._fband
+        lastbandbottom = lastbandtop + perband * self._fband
+
+        print(lastbandtop)
+        print(lastbandbottom)
+
+        largestsampdelay = int(np.ceil(4.15e+03 * dm * (1.0 / (lastbandbottom * lastbandbottom) - 1.0 / (lastbandtop * lastbandtop)) / self._tsamp))
+        #largestsampdelay = int(np.ceil(largestdelay / self._tsamp))
         
-        #print("File length: %d, max dispersion: %d, padding samples: %d, output samples %d" % (inputdata.shape[1], fullsampdelay, padding, sampout))
-        
-        band = 0
-        
-        if ((int(padding) + fullsampdelay + sampout) < inputdata.shape[1]):
-            
-            for chan in np.arange(perband):
-                chanfreq = self._ftop + chan * self._fband
-                delay = int(np.round(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp))
-                dedispersed[band, :] = np.add(dedispersed[band, :], inputdata[chan, int(padding) + delay : int(padding) + delay + sampout])
-                
+        if (outbands == 1):
+            padding = np.floor(self._dedisp_pad_s / self._tsamp)
+            sampout = int(2 * padding)
         else:
-            print("We got something wrong: need more samples than there is in the data")
+            padding = 0
+            sampout = int(inputdata.shape[1] - largestsampdelay)
+
+        print(sampout)
         
+        print(largestsampdelay)
+        print(sampout)
+        print(inputdata.shape)
+
+        if ((int(padding) + largestsampdelay + sampout) > inputdata.shape[1]):
+            print("We got something wrong: need more samples than there is in the data")
+            padding = 0
+            sampout =  int(inputdata.shape[1] - largestsampdelay)
+
+        dedispersed = np.zeros((outbands, sampout))
+
+        for band in np.arange(outbands):
+            bandtop = self._ftop + band * perband * self._fband
+            for chan in np.arange(perband):
+                chanfreq = bandtop + chan * self._fband
+                delay = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
+                dedispersed[band, :] = np.add(dedispersed[band, :], inputdata[chan + band * perband, int(padding) + delay : int(padding) + delay + sampout])
+        
+            '''
+            if ((int(padding) + fullsampdelay + sampout) < inputdata.shape[1]):
+                
+                for chan in np.arange(perband):
+                    chanfreq = self._ftop + chan * self._fband
+                    delay = int(np.round(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp))
+                    dedispersed[band, :] = np.add(dedispersed[band, :], inputdata[chan, int(padding) + delay : int(padding) + delay + sampout])
+            '''     
+
+        #else:
+        #    print("We got something wrong: need more samples than there is in the data")
+
+
         dm_end = time.time()
         
         if (self._verbose):
             print("Dedispersion took %.2fs" % (dm_end - dm_start))
 
-        return dedispersed
-    
+        return dedispersed       
+
     def PlotSpcclCands(self, candidates):
 
         last_mjd = candidates['MJD'].values[-1]
@@ -140,16 +171,17 @@ class Plotter:
         print("Read %d time samples" % (fildata.shape[1]))
         fildata = fildata * mask[:, np.newaxis]
         # Time average the data
-        timesamples = int(np.floor(fildata.shape[1] / self._timeavg) * self._timeavg)        
         
         # Frequency average the data
         frequencies = int(np.floor(fildata.shape[0] / self._freqavg) * self._freqavg)
-        filfreqavg = fildata[:frequencies, :timesamples].reshape(-1, self._freqavg, timesamples).sum(axis=1)
-        
+        #filfreqavg = fildata[:frequencies, :timesamples].reshape(-1, self._freqavg, timesamples).sum(axis=1)
+        filfreqavg = self.Dedisperse(fildata, properties['DM'], self._dedisp_bands)
+
         # Both averages
-        filbothavg = filfreqavg.reshape(filfreqavg.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
+        timesamples = int(np.floor(filfreqavg.shape[1] / self._timeavg) * self._timeavg)                
+        filbothavg = filfreqavg[:, :timesamples].reshape(filfreqavg.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
         
-        notzero = (filbothavg[:,0])[np.where(filbothavg[:,0]!=0)[0]]
+        #notzero = (filbothavg[:,0])[np.where(filbothavg[:,0]!=0)[0]]
         
         filband = np.mean(filbothavg, axis=1)
         filbothavg = filbothavg - filband[:, np.newaxis]
@@ -189,7 +221,7 @@ class Plotter:
         axboth.set_yticklabels(avg_freq_label_str, fontsize=8)        
 
         # Dedisperse the original filterbank data
-        dedispersed = self.Dedisperse(fildata, properties['DM'])
+        dedispersed = self.Dedisperse(fildata, properties['DM'], 1)
         
         # Average the dedispersed time series
         dedisp_avg_time = int(np.floor(dedispersed.shape[1] / self._timeavg) * self._timeavg)
