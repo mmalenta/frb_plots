@@ -299,7 +299,7 @@ class Plotter:
         if (np.sum(dedispersed) == 0):
             axdedisp.text(0.5, 0.6, 'Not dedispersed properly - please report!', fontsize=14, weight='bold', color='firebrick',  horizontalalignment='center', verticalalignment='center', transform=axdedisp.transAxes)
         
-        plotdir = self._outdir + '/beam0' + str(nodebeam) + '/Plots/'
+        plotdir = self._outdir + '/beam0' + str(nodebeam) + '/Plots_single/'
         
         fil_fig.savefig(plotdir + str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.jpg', bbox_inches = 'tight', quality=75)
         
@@ -488,10 +488,10 @@ class Watcher:
 
                             self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, self._nchans, highest_snr, mjdtime, full_beam, ibeam)
 
-                            with open(beam_dir + 'Plots/used_candidates.spccl.extra.full' , 'a') as f:
+                            with open(beam_dir + 'Plots_single/used_candidates.spccl.extra.full' , 'a') as f:
                                 selected.to_csv(f, sep='\t', header=False, float_format="%.4f", index=False, index_label=False)
 
-                            with open(beam_dir + 'Plots/used_candidates.spccl.extra' , 'a') as f:
+                            with open(beam_dir + 'Plots_single/used_candidates.spccl.extra' , 'a') as f:
                                 f.write("%d\t%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (0, highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
                             
                         else:
@@ -531,7 +531,7 @@ class Watcher:
                 beam_dir = self._directory + '/beam0' + str(ibeam) + '/'
                 if os.path.isdir(beam_dir):
                     try:
-                        os.mkdir(self._directory + '/beam0' + str(ibeam) + '/Plots')
+                        os.mkdir(self._directory + '/beam0' + str(ibeam) + '/Plots_single')
                     except FileExistsError:
                         if (self._verbose):
                             print("Directory already exists")
