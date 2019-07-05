@@ -70,7 +70,7 @@ class Plotter:
         lastbandtop = self._ftop + (outbands - 1) * perband * self._fband
         lastbandbottom = lastbandtop + perband * self._fband
 
-        fullsampdelay = self._disp_const * dm / self._tsamp
+        fullsampdelay = int(np.ceil(self._disp_const * dm / self._tsamp))
         largestsampdelay = int(np.ceil(4.15e+03 * dm * (1.0 / (lastbandbottom * lastbandbottom) - 1.0 / (lastbandtop * lastbandtop)) / self._tsamp))
         original_padding_samples = int(np.floor(self._dedisp_pad_s / self._tsamp))
 
@@ -95,9 +95,9 @@ class Plotter:
                 print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples))
 
         # We have case 3 - add extra 0 padding at the end
-        if (int(np.ceil(((candmjd - filmjd) * 86400.0 / self._tsamp + fullsampdelay + original_padding_samples))) > inputdata.shape[1]):
+        if (int(np.ceil(((candmjd - filmjd) * 86400.0 / self._tsamp + fullsampdelay + 2.0 * original_padding_samples))) > inputdata.shape[1]):
             # Padding for the full sweep
-            zero_padding_samples = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp + fullsampdelay + original_padding_samples)) - inputdata.shape[1]
+            zero_padding_samples = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp + fullsampdelay + 2.0 * original_padding_samples)) - inputdata.shape[1]
             inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
 
             # Add extra full Cheetah padding
@@ -117,8 +117,8 @@ class Plotter:
             padding_samples = int(np.floor(((candmjd - self._cand_pad_mjd / 2.0) - filmjd) * 86400.0 / self._tsamp) + data_start)
             sampout = int(np.ceil(2 * original_padding_samples))
         else:
-            padding_samples = 0
-            sampout = int(inputdata.shape[1] - largestsampdelay)
+            padding_samples = int(np.floor(((candmjd - self._cand_pad_mjd / 2.0) - filmjd) * 86400.0 / self._tsamp) + data_start)
+            sampout = int(np.ceil(2 * original_padding_samples)) + fullsampdelay
 
         print(padding_samples)
         print(sampout) 
@@ -251,7 +251,7 @@ class Plotter:
         
         # Prepare the time ticks
         avg_time_pos = np.linspace(0, (int)(timesamples / self._timeavg), num=5)
-        avg_time_label = avg_time_pos * self._tsamp * self._timeavg
+        avg_time_label = avg_time_pos * self._tsamp * self._timeavg + skip_padding * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._dedisp_pad_s)
         avg_time_label_str = [fmt(label) for label in avg_time_label]
         
         cmap = 'binary'
@@ -268,7 +268,7 @@ class Plotter:
         axboth.set_xticklabels(avg_time_label_str, fontsize=8)
         axboth.set_yticks(avg_freq_pos)
         axboth.set_yticklabels(avg_freq_label_str, fontsize=8)        
-
+        
         # Fully dedisperse the original filterbank data
         dedispersed, skip_padding = self.Dedisperse(fildata, filmjd, properties, 1)
         dedispersed = dedispersed / dedispersed.shape[1]
@@ -285,10 +285,9 @@ class Plotter:
         dedisp_time_label_str = [fmt(label) for label in dedisp_time_label]
         
         axdedisp = fil_axis[1]
-        #axdedisp.plot(dedispersed[0, :], linewidth=0.4, color='black')
         axdedisp.plot(dedisp_avg[0, :], linewidth=0.4, color='black')
         fmtdm = "{:.2f}".format(properties['DM'])
-        axdedisp.axvline(int(dedisp_avg_time / self._timeavg / 2), color='grey', linewidth=0.5, linestyle='--')
+        axdedisp.axvline(int(dedisp_avg_time / self._timeavg / 2), color='grey', linewidth=0.5, linestyle=':')
         axdedisp.set_ylim()
         axdedisp.set_title('Dedispersed time series, DM ' + fmtdm)
         axdedisp.set_xticks(dedisp_time_pos)
