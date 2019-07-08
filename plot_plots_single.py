@@ -256,11 +256,20 @@ class Plotter:
         
         cmap = 'binary'
         
-        fil_fig, fil_axis = plt.subplots(2, 1, figsize=(11.69,8.27), dpi=75)
+        fil_fig, fil_axis = plt.subplots(2, 1, figsize=(11.69,8.27), dpi=150)
         fil_fig.tight_layout(h_pad=3.25, rect=[0, 0.03, 1, 0.95])
         
+        dedispchans = filbothavg.shape[0]
+        delays = np.zeros(dedispchans)
+
+        for ichan in np.arange(dedispchans):
+            chanfreq = self._ftop + ichan * self._fband * self._freqavg
+            delays[ichan] = int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp) / self._timeavg) + 0.95 * self._dedisp_pad_s / (self._timeavg * self._tsamp)
+
+
         axboth = fil_axis[0]
         axboth.imshow(filbothavg, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
+        axboth.plot(delays, np.arange(dedispchans), linewidth=0.5, color='deepskyblue')
         axboth.set_title('Time (' + str(self._timeavg) + '), freq (' + str(self._freqavg) + ') avg', fontsize=11)
         axboth.set_xlabel('Time [s]', fontsize=10)
         axboth.set_ylabel('Frequency [MHz]', fontsize=10)
@@ -287,7 +296,7 @@ class Plotter:
         axdedisp = fil_axis[1]
         axdedisp.plot(dedisp_avg[0, :], linewidth=0.4, color='black')
         fmtdm = "{:.2f}".format(properties['DM'])
-        axdedisp.axvline(int(dedisp_avg_time / self._timeavg / 2), color='grey', linewidth=0.5, linestyle=':')
+        axdedisp.axvline(int(dedisp_avg_time / self._timeavg / 2), color='deepskyblue', linewidth=0.5)
         axdedisp.set_ylim()
         axdedisp.set_title('Dedispersed time series, DM ' + fmtdm)
         axdedisp.set_xticks(dedisp_time_pos)
@@ -300,7 +309,7 @@ class Plotter:
         
         plotdir = self._outdir + '/beam0' + str(nodebeam) + '/Plots_single/'
         
-        fil_fig.savefig(plotdir + str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.jpg', bbox_inches = 'tight', quality=75)
+        fil_fig.savefig(plotdir + str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.png', bbox_inches = 'tight')#, quality=75)
         
         plt.close(fil_fig)
 
