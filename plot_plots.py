@@ -86,6 +86,9 @@ class Plotter:
         # Case 4 definitely appears in case 3, but can also happend in case 2
         
         # We have case 1 - add extra 0 padding at the start
+
+        cand_samples_from_start = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp))
+
         if ((candmjd - self._cand_pad_mjd) < filmjd):
             actualpad = (candmjd - filmjd)
             zero_padding_samples = int(np.ceil((self._cand_pad_mjd - actualpad) * 86400.0 / self._tsamp))
@@ -95,6 +98,16 @@ class Plotter:
                 print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples))
 
         # We have case 3 - add extra 0 padding at the end
+        if ((data_start + cand_samples_from_start + fullsampdelay) > inputdata.shape[1]):
+            zero_padding_samples = (data_start + cand_samples_from_start + fullsampdelay) - inputdata.shape[1] + 2 * original_padding_samples
+            inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
+
+            # Add extra full Cheetah padding
+            #zero_padding_samples = int(np.ceil(self._cand_pad_s / self._tsamp))
+            #inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)            
+            if (self._verbose):
+                print("Not enough data at the end. Padding with %d extra samples" % (zero_padding_samples))
+        '''
         if (int(np.ceil(((candmjd - filmjd) * 86400.0 / self._tsamp + fullsampdelay + 2.0 * original_padding_samples))) > inputdata.shape[1]):
             # Padding for the full sweep
             zero_padding_samples = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp + fullsampdelay + 2.0 * original_padding_samples)) - inputdata.shape[1]
@@ -105,10 +118,10 @@ class Plotter:
             #inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)            
             if (self._verbose):
                 print("Not enough data at the end. Padding with %d extra samples" % (zero_padding_samples))
-
+        '''
         # We have case 4 - add extra 0 padding at the end
-        if (largestsampdelay > original_padding_samples):
-            zero_padding_samples = int(largestsampdelay - original_padding_samples)
+        if (largestsampdelay > 2 * original_padding_samples):
+            zero_padding_samples = int(largestsampdelay - 2 * original_padding_samples)
             inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
             if (self._verbose):
                 print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples))
@@ -120,6 +133,10 @@ class Plotter:
             padding_samples = int(np.floor(((candmjd - self._cand_pad_mjd / 2.0) - filmjd) * 86400.0 / self._tsamp) + data_start)
             sampout = int(np.ceil(2 * original_padding_samples)) + fullsampdelay
 
+        print(candmjd)
+        print(filmjd)
+        print(dm)
+        print(fullsampdelay)
         print(padding_samples)
         print(sampout) 
         print(largestsampdelay)
@@ -145,7 +162,7 @@ class Plotter:
             if ((int(padding) + fullsampdelay + sampout) < inputdata.shape[1]):
                 
                 for chan in np.arange(perband):
-                    chanfreq = self._ftop + chan * self._fband
+                    chanfreq = self._ftop + chan * self._fbandNot enough data at the start. Padding with 160
                     delay = int(np.round(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp))
                     dedispersed[band, :] = np.add(dedispersed[band, :], inputdata[chan, int(padding) + delay : int(padding) + delay + sampout])
             '''     
@@ -213,7 +230,7 @@ class Plotter:
         print("Read %d time samples" % (fildata.shape[1]))
         samples_read = fildata.shape[1]
         fildata = fildata * mask[:, np.newaxis]
-        filband = np.mean(fildata, axis=1)
+        filband = np.mean(fildata[:, 128:], axis=1)
         fildata = fildata - filband[:, np.newaxis]
         # Time average the data
         
