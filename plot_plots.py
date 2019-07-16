@@ -18,9 +18,10 @@ from astropy.time import Time
 # This class does the actual plotting
 class Plotter:
     
-    def __init__(self, timing, verbose, outdir = './'):
+    def __init__(self, timing, verbose,  maskfile, outdir = './'):
         # General managment
         self._plotdir = outdir
+        self._mask_file = maskfile
         self._timing = timing
         self._verbose = verbose
 
@@ -47,9 +48,9 @@ class Plotter:
 
         # Dedispersion parameters
         self._disp_const = 4.15e+03 * (1.0 / (self._fbottom * self._fbottom) - 1.0 / (self._ftop * self._ftop)) # in s per unit DM
-        self._cand_pad_s = 0.5
-        self._cand_pad_mjd = self._cand_pad_s / 86400.0
-        self._dedisp_pad_s = self._cand_pad_s / 2.0
+        self._filfile_pad_s = 0.5
+        self._filfile_pad_mjd = self._filfile_pad_s / 86400.0
+        self._plot_pad_s = self._filfile_pad_s / 2.0
         self._dedisp_bands = int(self._nchans / self._freqavg)
 
         if self._verbose:
@@ -60,19 +61,20 @@ class Plotter:
         dm_start = time.time()
         dm = properties['DM']
         candmjd = properties['MJD']
-        data_start = 0
-
         perband = int(self._nchans / outbands)
-        padding_samples = 0
+        original_data_length = inputdata.shape[1]
+        filfile_padding_samples = int(np.floor(self._filfile_pad_s / self._tsamp))
+        plot_padding_samples = int(np.floor(self._plot_pad_s / self._tsamp))
+        cand_samples_from_start = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp))
 
-        sampout = 0
-        
+        output_samples = 0
+        plot_skip_samples = 0
+        start_padding_added = 0
+
         lastbandtop = self._ftop + (outbands - 1) * perband * self._fband
         lastbandbottom = lastbandtop + perband * self._fband
-
         fullsampdelay = int(np.ceil(self._disp_const * dm / self._tsamp))
         largestsampdelay = int(np.ceil(4.15e+03 * dm * (1.0 / (lastbandbottom * lastbandbottom) - 1.0 / (lastbandtop * lastbandtop)) / self._tsamp))
-        original_padding_samples = int(np.floor(self._dedisp_pad_s / self._tsamp))
 
         # There are 4(5) cases in general (if everything is extracted correctly):
         ## 1. Not enough padding at the start of the file (candidate was early enough in the file that there is no full padding)
@@ -83,23 +85,20 @@ class Plotter:
         ## 4. Not enough padding to cover the sweep in the last band
         # If we have case 2 - we are good
         # Cases 1 and 3 can appear together with how the candidates are extracted at the moment
-        # Case 4 definitely appears in case 3, but can also happend in case 2
+        # Case 4 definitely appears in case 3, but can also appear in case 2
         
         # We have case 1 - add extra 0 padding at the start
-
-        cand_samples_from_start = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp))
-
-        if ((candmjd - self._cand_pad_mjd) < filmjd):
+        if ((candmjd - self._filfile_pad_mjd) < filmjd):
             actualpad = (candmjd - filmjd)
-            zero_padding_samples = int(np.ceil((self._cand_pad_mjd - actualpad) * 86400.0 / self._tsamp))
-            data_start = zero_padding_samples
+            zero_padding_samples = int(np.ceil((self._filfile_pad_mjd - actualpad) * 86400.0 / self._tsamp))
+            start_padding_added = zero_padding_samples
             inputdata = np.append(np.zeros((self._nchans, zero_padding_samples)), inputdata, axis=1)
             if (self._verbose):
                 print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples))
 
         # We have case 3 - add extra 0 padding at the end
-        if ((data_start + cand_samples_from_start + fullsampdelay) > inputdata.shape[1]):
-            zero_padding_samples = (data_start + cand_samples_from_start + fullsampdelay) - inputdata.shape[1] + 2 * original_padding_samples
+        if ((start_padding_added + cand_samples_from_start + fullsampdelay + filfile_padding_samples) > inputdata.shape[1]):
+            zero_padding_samples = (start_padding_added + cand_samples_from_start + fullsampdelay + filfile_padding_samples) - inputdata.shape[1]
             inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
 
             # Add extra full Cheetah padding
@@ -107,76 +106,54 @@ class Plotter:
             #inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)            
             if (self._verbose):
                 print("Not enough data at the end. Padding with %d extra samples" % (zero_padding_samples))
-        '''
-        if (int(np.ceil(((candmjd - filmjd) * 86400.0 / self._tsamp + fullsampdelay + 2.0 * original_padding_samples))) > inputdata.shape[1]):
-            # Padding for the full sweep
-            zero_padding_samples = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp + fullsampdelay + 2.0 * original_padding_samples)) - inputdata.shape[1]
-            inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
 
-            # Add extra full Cheetah padding
-            #zero_padding_samples = int(np.ceil(self._cand_pad_s / self._tsamp))
-            #inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)            
-            if (self._verbose):
-                print("Not enough data at the end. Padding with %d extra samples" % (zero_padding_samples))
-        '''
-        # We have case 4 - add extra 0 padding at the end
-        if (largestsampdelay > 2 * original_padding_samples):
-            zero_padding_samples = int(largestsampdelay - 2 * original_padding_samples)
-            inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
-            if (self._verbose):
-                print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples))
+        # How many samples to skip from start of the data block
+        plot_skip_samples = cand_samples_from_start - plot_padding_samples + start_padding_added
 
         if (outbands == 1):
-            padding_samples = int(np.floor(((candmjd - self._cand_pad_mjd / 2.0) - filmjd) * 86400.0 / self._tsamp) + data_start)
-            sampout = int(np.ceil(2 * original_padding_samples))
+            # Padding on both sides
+            # Currently ignores the pulse width
+            output_samples = int(np.ceil(2 * plot_padding_samples))
         else:
-            padding_samples = int(np.floor(((candmjd - self._cand_pad_mjd / 2.0) - filmjd) * 86400.0 / self._tsamp) + data_start)
-            sampout = int(np.ceil(2 * original_padding_samples)) + fullsampdelay
-
-        print(candmjd)
-        print(filmjd)
-        print(dm)
-        print(fullsampdelay)
-        print(padding_samples)
-        print(sampout) 
-        print(largestsampdelay)
-        print(inputdata.shape)
-
-        '''
-        if ((int(padding) + largestsampdelay + sampout) > inputdata.shape[1]):
-            print("We got something wrong: need more samples than there is in the data")
-            padding = 0
-            sampout =  int(inputdata.shape[1] - largestsampdelay)
-        '''
+            # Padding on both sides + extra DM sweep
+            output_samples = int(np.ceil(2 * plot_padding_samples)) + fullsampdelay
+            # We have case 4 - add extra 0 padding at the end
+            # We only have to worry about the extra delay when we do a subband dedispersion
+            if (largestsampdelay > filfile_padding_samples):
+                zero_padding_samples = int(largestsampdelay - filfile_padding_samples)
+                inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
+                if (self._verbose):
+                    print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples))
         
-        dedispersed = np.zeros((outbands, sampout))
+        if (self._verbose):
+            print("Candidate plotting:")
+            if (outbands == 1):
+                print("\tFully dedispersed time series")
+            else:
+                print("\tSubband dedispersed")
+
+            print("\tInput data length (original): %d" % (original_data_length))
+            print("\tInput data length (with all padding included): %d" % (inputdata.shape[1]))
+            print("\tOutput plot samples: %d" % (output_samples))
+            print("\tDM sweep samples: %d" % (fullsampdelay))
+            print("\tPadding at the start: %d" % (start_padding_added))
+
+
+        dedispersed = np.zeros((outbands, output_samples))
 
         for band in np.arange(outbands):
             bandtop = self._ftop + band * perband * self._fband
             for chan in np.arange(perband):
                 chanfreq = bandtop + chan * self._fband
                 delay = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
-                dedispersed[band, :] = np.add(dedispersed[band, :], inputdata[chan + band * perband, int(padding_samples) + delay : int(padding_samples) + delay + sampout])
-        
-            '''
-            if ((int(padding) + fullsampdelay + sampout) < inputdata.shape[1]):
-                
-                for chan in np.arange(perband):
-                    chanfreq = self._ftop + chan * self._fbandNot enough data at the start. Padding with 160
-                    delay = int(np.round(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp))
-                    dedispersed[band, :] = np.add(dedispersed[band, :], inputdata[chan, int(padding) + delay : int(padding) + delay + sampout])
-            '''     
-
-        #else:
-        #    print("We got something wrong: need more samples than there is in the data")
-
+                dedispersed[band, :] = np.add(dedispersed[band, :], inputdata[chan + band * perband, int(plot_skip_samples) + delay : int(plot_skip_samples) + delay + output_samples])
 
         dm_end = time.time()
         
         if (self._verbose):
             print("Dedispersion took %.2fs" % (dm_end - dm_start))
 
-        return dedispersed, data_start       
+        return dedispersed, start_padding_added       
 
     def PlotSpcclCands(self, candidates):
 
@@ -210,6 +187,8 @@ class Plotter:
     
     def PlotExtractedCand(self, beam_dir, filename, headsize, nchans, properties, filmjd, ibeam=0, nodebeam=0):
         
+        mask = np.loadtxt(self._mask_file)
+
         mask = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         # How many time samples we have across the pulse width
         pulse_samples = properties['Width'] * 1e-03 / self._tsamp
@@ -232,31 +211,19 @@ class Plotter:
         fildata = fildata * mask[:, np.newaxis]
         filband = np.mean(fildata[:, 128:], axis=1)
         fildata = fildata - filband[:, np.newaxis]
-        # Time average the data
         
         # Frequency average the data (i.e. subband dedisperse)
         filfreqavg, skip_padding = self.Dedisperse(fildata, filmjd, properties, self._dedisp_bands)
 
-        print(filfreqavg.shape)
-        print(fildata.shape)
-
-        # Both averages
+        # Time average the data
         timesamples = int(np.floor(filfreqavg.shape[1] / self._timeavg) * self._timeavg)                
         filbothavg = filfreqavg[:, :timesamples].reshape(filfreqavg.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
         
-        #notzero = (filbothavg[:,0])[np.where(filbothavg[:,0]!=0)[0]]
-        
-        #filband = np.mean(filbothavg[:, skip_padding : (skip_padding + samples_read)], axis=1)
-        #filbothavg = filbothavg - filband[:, np.newaxis]
-
         datamean = np.mean(filbothavg[:, skip_padding : (skip_padding + samples_read)])
         datastd = np.std(filbothavg[:, skip_padding : (skip_padding + samples_read)])        
 
         ctop = int(np.ceil(datamean + 1.25 * datastd))
         cbottom = int(np.floor(datamean - 0.5 * datastd))
-        
-        print(ctop)
-        print(cbottom)
 
         fmt = lambda x: "{:.2f}".format(x)
         
@@ -268,7 +235,7 @@ class Plotter:
         
         # Prepare the time ticks
         avg_time_pos = np.linspace(0, (int)(timesamples / self._timeavg), num=5)
-        avg_time_label = avg_time_pos * self._tsamp * self._timeavg + skip_padding * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._dedisp_pad_s)
+        avg_time_label = avg_time_pos * self._tsamp * self._timeavg + skip_padding * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._plot_pad_s)
         avg_time_label_str = [fmt(label) for label in avg_time_label]
         
         cmap = 'binary'
@@ -281,7 +248,7 @@ class Plotter:
 
         for ichan in np.arange(dedispchans):
             chanfreq = self._ftop + ichan * self._fband * self._freqavg
-            delays[ichan] = int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp) / self._timeavg) + 0.95 * self._dedisp_pad_s / (self._timeavg * self._tsamp)
+            delays[ichan] = int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp) / self._timeavg) + 0.95 * self._plot_pad_s / (self._timeavg * self._tsamp)
 
         axboth = fil_axis[0]
         axboth.imshow(filbothavg, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
@@ -293,20 +260,17 @@ class Plotter:
         axboth.set_xticklabels(avg_time_label_str, fontsize=8)
         axboth.set_yticks(avg_freq_pos)
         axboth.set_yticklabels(avg_freq_label_str, fontsize=8)        
-        
+
         # Fully dedisperse the original filterbank data
         dedispersed, skip_padding = self.Dedisperse(fildata, filmjd, properties, 1)
         dedispersed = dedispersed / dedispersed.shape[1]
         # Average the dedispersed time series
         dedisp_avg_time = int(np.floor(dedispersed.shape[1] / self._timeavg) * self._timeavg)
-        print(dedispersed.shape)
-        print(dedisp_avg_time)
         dedisp_avg = dedispersed[0, :dedisp_avg_time].reshape(1, int(dedisp_avg_time / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg
 
         dedisp_time_pos = np.linspace(0, int(dedisp_avg_time / self._timeavg), num=9)
-        print(dedisp_time_pos)
-        dedisp_time_label = dedisp_time_pos * self._tsamp * self._timeavg + self._dedisp_pad_s + (properties['MJD'] - filmjd) * 86400.0
-        dedisp_time_label = dedisp_time_pos * self._tsamp * self._timeavg + skip_padding * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._dedisp_pad_s)        
+        dedisp_time_label = dedisp_time_pos * self._tsamp * self._timeavg + self._plot_pad_s + (properties['MJD'] - filmjd) * 86400.0
+        dedisp_time_label = dedisp_time_pos * self._tsamp * self._timeavg + skip_padding * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._plot_pad_s)        
         dedisp_time_label_str = [fmt(label) for label in dedisp_time_label]
         
         axdedisp = fil_axis[1]
@@ -324,7 +288,6 @@ class Plotter:
             axdedisp.text(0.5, 0.6, 'Not dedispersed properly - please report!', fontsize=14, weight='bold', color='firebrick',  horizontalalignment='center', verticalalignment='center', transform=axdedisp.transAxes)
         
         plotdir = self._outdir + '/beam0' + str(nodebeam) + '/Plots/'
-        
         fil_fig.savefig(plotdir + str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.png', bbox_inches = 'tight')#, quality=75)
         
         plt.close(fil_fig)
@@ -336,9 +299,10 @@ class Plotter:
 # This is an overarching class that watches the directories and detects any changes
 class Watcher:
     
-    def __init__(self, indir, eventsfile, timing=True, verbose=False):
+    def __init__(self, indir, eventsfile, maskfile, timing=True, verbose=False):
         self._events_file = eventsfile
         self._directory = indir
+        self._mask_file = maskfile
         self._timing = timing
         self._verbose = verbose
         self._watching = True
@@ -358,7 +322,7 @@ class Watcher:
             if self._timing:
                 print("Enabling timing")
         
-        self._plotter = Plotter(self._timing, self._verbose, self._directory)
+        self._plotter = Plotter(self._timing, self._verbose, self._mask_file, self._directory)
     
     def GetNewSpcclFiles(self):
         if self._verbose:
@@ -578,11 +542,15 @@ class Watcher:
         fil_thread.join()
         #spccl_thread.join()
 
-
 def main():
     
     basedir = sys.argv[1]
     events_file = 'pipeline_events.log'
+
+    if (len(sys.argv) > 2):
+        maskfile = sys.argv[2]
+    else:
+        maskfile = '/output/channel_mask.dat'
 
     #utc_dirs = []
 
@@ -600,7 +568,7 @@ def main():
     #print(latest_utc_dir)
 
     print("Will use directory %s" % (plotdir))
-    watcher = Watcher(plotdir, events_file, True, True)
+    watcher = Watcher(plotdir, events_file, maskfile, True, True)
     watcher.Watch()
 
 if __name__ == "__main__":
