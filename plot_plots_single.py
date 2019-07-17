@@ -420,17 +420,19 @@ class Watcher:
                     cand_dir = self._directory + '/beam0' + str(ibeam) + '/'
                     cand_file = glob.glob(cand_dir + '/*.spccl')
 
+                    '''
                     while (len(cand_file) == 0):
                         if self._verbose:
                             print("No .spccl file for beam %d yet..." % (ibeam))
                         time.sleep(0.125)
                         cand_file = glob.glob(cand_dir + '/*.spccl')
-
+                    '''
 
                     beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
                     latest_cand_mjd = beam_cands.tail(1)['MJD'].values[0]
                     print("Latest candidate MJD: %.10f" % (latest_cand_mjd))
 
+                    '''
                     while latest_cand_mjd < latest_fil_mjd:
                         time.sleep(0.1)
                         beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
@@ -438,6 +440,7 @@ class Watcher:
                         if self._verbose:
                             print("Waiting for an updated .spccl file for beam %d..." % (ibeam))
                             print("Latest candidate MJD: %.10f" % (latest_cand_mjd))
+                    '''
 
                     mjd_pad = 0.5 / 86400.0
                     
