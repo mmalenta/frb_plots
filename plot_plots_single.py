@@ -48,7 +48,7 @@ class Plotter:
 
         # Dedispersion parameters
         self._disp_const = 0.0
-        self._filfile_pad_s = 0.5
+        self._filfile_pad_s = 1.0
         self._filfile_pad_mjd = self._filfile_pad_s / 86400.0
         self._plot_pad_s = self._filfile_pad_s / 2.0
         self._dedisp_bands = 0
@@ -328,7 +328,7 @@ class Watcher:
         self._nbeams = 6
         self._header_names = ['MJD', 'DM', 'Width', 'SNR']
         self._start_time = time.time()
-        self._mjd_pad = 0.5 / 86400.0
+        self._mjd_pad = 1.0 / 86400.0
         self._beam_info = pd.DataFrame()
         
         self._plot_length = 120.0 # how many seconds of data to plot
@@ -458,7 +458,7 @@ class Watcher:
                     latest_cand_mjd = beam_cands.tail(1)['MJD'].values[0]
                     print("Latest candidate MJD: %.10f" % (latest_cand_mjd))
 
-                    mjd_pad = 0.5 / 86400.0
+                    mjd_pad = 1.0 / 86400.0
                     for new_ff in new_fil_files:
                         print("Finding a match for file %s" % (new_ff[0]))
                         
