@@ -483,7 +483,7 @@ class Watcher:
 
                             fmtdm = "{:.2f}".format(highest_snr['DM'])
 
-                            selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + fmtdm + '_beam_' + str(full_beam) + '.jpg'
+                            selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + fmtdm + '_beam_' + str(full_beam) + '.png'
                             highest_snr = selected.iloc[selected['SNR'].idxmax()]
 
                             self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, nchans, ftop, fband, tsamp, highest_snr, mjdtime, full_beam, ibeam)
