@@ -1,6 +1,7 @@
 import matplotlib
 matplotlib.use('Agg')
 
+import argparse
 import glob
 import json
 import matplotlib.gridspec as gs
@@ -322,10 +323,11 @@ class Plotter:
 # This is an overarching class that watches the directories and detects any changes
 class Watcher:
     
-    def __init__(self, indir, eventsfile, maskfile, timing=True, verbose=False):
-        self._events_file = eventsfile
-        self._directory = indir
-        self._mask_file = maskfile
+    def __init__(self, data_dir, events_file, mask_file, timing=False, verbose=False, single_pass=False):
+        self._events_file = events_file
+        self._directory = data_dir
+        self._mask_file = mask_file
+        self._single_pass = single_pass
         self._timing = timing
         self._verbose = verbose
         self._watching = True
@@ -413,6 +415,7 @@ class Watcher:
             
     
     def GetNewFilFiles(self):
+        
         if self._verbose:
             print("Watching for .fil files")
         
@@ -537,16 +540,18 @@ class Watcher:
     def GetLogs(self, logfile):
         with open((self._directory + logfile)) as f:
             lines = f.readlines()
-            start_event = lines[0]
-            end_event = lines[-1]
+            startevent = lines[0]
+            endevent = lines[-1]
 
         log_info = pd.DataFrame(columns=['beam', 'ra', 'dec'])
-        for beam in json.loads(start_event)['beams']:
+        for beam in json.loads(startevent)['beams']:
             log_info.loc[len(log_info)] = ({'beam':int(beam['fbfuse_id'].split('bf')[-1]),
                                     'ra':beam['ra_hms'],
                                     'dec':beam['dec_dms']})
-        log_start_utc = json.loads(start_event)['utc']
-        log_end_utc = json.loads(end_event)['utc']
+        
+        # Currently not used, but might become useful in the future, so don't remove
+        log_start_utc = json.loads(startevent)['utc']
+        log_end_utc = json.loads(endevent)['utc']
         self._beam_info = log_info
     
     def Watch(self):
@@ -555,43 +560,70 @@ class Watcher:
         if (self._verbose):
             print("Creating plots output directory")
             
-            for ibeam in np.arange(6):
-                beam_dir = self._directory + '/beam0' + str(ibeam) + '/'
-                if os.path.isdir(beam_dir):
-                    try:
-                        os.mkdir(self._directory + '/beam0' + str(ibeam) + '/Plots')
-                    except FileExistsError:
-                        if (self._verbose):
-                            print("Directory already exists")
-                else:
+        for ibeam in np.arange(6):
+            beamdir = os.path.join(self._directory, 'beam0' + str(ibeam)')
+            if os.path.isdir(beamdir):
+
+                try:
+                    if (self._single_pass):
+                        os.mkdir(os.path.join(beamdir, 'Plots_single'))
+                    else:
+                        os.mkdir(os.path.join(beamdir, 'Plots))
+
+                except FileExistsError:
                     if (self._verbose):
-                        print("No directory %s" % (beam_dir))
-            
+                        print("Directory already exists")
+            else:
+                if (self._verbose):
+                    print("No directory %s" % (beamdir))
+                    # Need to quit here if we can't find beam directories
+
         if (self._verbose):
             print("Parsing log files")
             self.GetLogs(self._events_file)
         
         #spccl_thread = threading.Thread(target=self.GetNewSpcclFiles)
         #spccl_thread.start()
-        fil_thread = threading.Thread(target=self.GetNewFilFiles)
-        fil_thread.start()
-        fil_thread.join()
+        filthread = threading.Thread(target=self.GetNewFilFiles)
+        filthread.start()
+        filthread.join()
         #spccl_thread.join()
 
 def main():
     
-    basedir = sys.argv[1]
-    events_file = 'pipeline_events.log'
+    parser = argparse.ArgumentParser(description="Generating candidate plots for MeerTRAP",
+                                        usage="%(prog)s <options>",
+                                        epilog="For any bugs, please start an issue at https://gitlab.com/MeerTRAP/frb_plots")
+    parser.add_argument("-v", "--verbose", help="Enable verbose mode", action="store_true")
+    parser.add_argument("-t", "--timing", help="Print the timing information", action="store_true")
+    parser.add_argument("-s", "--single", help="Single pass through the data (watch the directory by default)", action="store_true")
+    parser.add_argument("-m", "--mask", help="Channel mask file", type=str)
+    parser.add_argument("-d", "--directory", help="Base data directory", required=True, type=str)
+    parser.add_argument("-e", "--events", help="Pipeline events log file", type=str)
 
-    if (len(sys.argv) > 2):
-        maskfile = sys.argv[2]
-    else:
-        maskfile = '/output/channel_mask.dat'
+    arguments = parser.parse_args()
 
-    plotdir = basedir + '/'
+    verbose = arguments.verbose
+    basedir = os.path.abspath(arguments.directory)
+    maskfile = arguments.mask
+    eventsfile = arguments.events
 
-    print("Will use directory %s" % (plotdir))
-    watcher = Watcher(plotdir, events_file, maskfile, True, True)
+    if (maskfile == None):
+        if (verbose):
+            print("Will not mask any channels")
+
+    if (verbose):
+        print("Will use directory %s" % (basedir))
+
+    if (eventsfile == None):
+        eventsfile = 'pipeline_events.log'
+            
+    eventsfile = os.path.abspath(eventsfile)
+
+    if (verbose):
+        print("Will use events file %s" % (eventsfile))
+    
+    watcher = Watcher(basedir, eventsfile, maskfile, arguments.timing, verbose, arguments.single)
     watcher.Watch()
 
 if __name__ == "__main__":
