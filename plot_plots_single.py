@@ -116,7 +116,7 @@ class Plotter:
             output_samples = int(np.ceil(2 * plot_padding_samples))
         else:
             # Padding on both sides + extra DM sweep
-            output_samples = int(np.ceil(2 * plot_padding_samples)) + fullsampdelay
+            output_samples = int(np.ceil(2 * plot_padding_samples)) + fullsampdelay - largestsampdelay
             # We have case 4 - add extra 0 padding at the end
             # We only have to worry about the extra delay when we do a subband dedispersion
             if (largestsampdelay > filfile_padding_samples):
@@ -137,6 +137,7 @@ class Plotter:
             print("\tOutput plot samples: %d" % (output_samples))
             print("\tDM sweep samples: %d" % (fullsampdelay))
             print("\tPadding at the start: %d" % (start_padding_added))
+            print("\tSamples skipped at the start: %d" % (plot_skip_samples))
 
 
         dedispersed = np.zeros((outbands, output_samples))
@@ -236,8 +237,12 @@ class Plotter:
         timesamples = int(np.floor(filfreqavg.shape[1] / self._timeavg) * self._timeavg)                
         filbothavg = filfreqavg[:, :timesamples].reshape(filfreqavg.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
         
-        datamean = np.mean(filbothavg[:, skip_padding : (skip_padding + samples_read)])
-        datastd = np.std(filbothavg[:, skip_padding : (skip_padding + samples_read)])        
+        # We are no longer dealing with original samples when the data is averaged
+        skip_padding_time_avg = int(np.floor(skip_padding / self._timeavg))
+        samples_read_time_avg = int(np.floor(samples_read / self._timeavg))
+ 
+        datamean = np.mean(filbothavg[:, skip_padding_time_avg : (skip_padding_time_avg + samples_read_time_avg)])
+        datastd = np.std(filbothavg[:, skip_padding_time_avg : (skip_padding_time_avg + samples_read_time_avg)])        
 
         ctop = int(np.ceil(datamean + 1.25 * datastd))
         cbottom = int(np.floor(datamean - 0.5 * datastd))
