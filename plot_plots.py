@@ -226,8 +226,11 @@ class Plotter:
         
         
         # Read original data
+        read_start = time.time()
         fildata = np.reshape(np.fromfile(os.path.join(beam_dir, filename), dtype='B')[headsize:], (-1, nchans)).T
-        print("Read %d time samples" % (fildata.shape[1]))
+        read_end = time.time()
+
+        print("Read %d time samples in %.4fs" % (fildata.shape[1], (read_end - read_start)))
         samples_read = fildata.shape[1]
         fildata = fildata * mask[:, np.newaxis]
         filband = np.mean(fildata[:, 128:], axis=1)
@@ -317,8 +320,12 @@ class Plotter:
         else:
             plotdir = os.path.join(self._outdir, 'beam0' + str(nodebeam), 'Plots')
 
+        save_start = time.time()
         fil_fig.savefig(os.path.join(plotdir, str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.png'), bbox_inches = 'tight')#, quality=75)
         plt.close(fil_fig)
+        save_end = time.time()
+
+        print("Saved figure for beam %d in %.4fs" % (ibeam, (save_end - save_start)))
 
     # This might do something in the future
     def PlotDist(self, filename, selected):
@@ -442,6 +449,8 @@ class Watcher:
 
                 if os.path.isdir(beam_dir):
 
+                    find_start = time.time()
+
                     full_beam = self._beam_info['beam'].values[ibeam]
                     beam_ra = self._beam_info['ra'].values[ibeam]
                     beam_dec = self._beam_info['dec'].values[ibeam]
@@ -452,8 +461,11 @@ class Watcher:
                             new_fil_files.append([ff.name, ff.stat().st_mtime])
 
                     new_len = len(new_fil_files)
+
+                    find_end = time.time()
+
                     print (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
-                    print("Found %d new filterbank files for beam %d" % (new_len, ibeam))
+                    print("Found %d new filterbank files for beam %d in %.4fs" % (new_len, ibeam, find_end - find_start))
 
                     if new_len > 0:
 
@@ -577,7 +589,11 @@ class Watcher:
                                 selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + fmtdm + '_beam_' + str(full_beam) + '.png'
                                 highest_snr = selected.iloc[selected['SNR'].idxmax()]
 
+                                plot_start = time.time()
                                 self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, nchans, ftop, fband, tsamp, highest_snr, mjdtime, full_beam, ibeam)
+                                plot_end = time.time()
+
+                                print("Plotting took %.2fs for beam %d" % (plot_end - plot_start, ibeam))
 
                                 with open(extra_full_file, 'a') as f:
                                     selected.to_csv(f, sep='\t', header=False, float_format="%.4f", index=False, index_label=False)
