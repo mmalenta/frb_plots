@@ -172,7 +172,7 @@ class Plotter:
     
         print("Plotting the full candidates")
         
-        figspccl = plt.figure(figsize=(15,10))
+        figspccl = plt.figure(figsize=(10.24, 7.68), frameon=False, dpi=10)
         axspccl = figspccl.gca()
         axspccl.ticklabel_format(useOffset=False)
         candsc = axspccl.scatter(x=candidates_to_plot['MJD'], y=candidates_to_plot['DM'] + 1, s=candidates_to_plot['SNR'], c=candidates_to_plot['Beam'], norm=norm, cmap=cmap)
@@ -183,7 +183,7 @@ class Plotter:
         sccbar = figspccl.colorbar(candsc, ticks=[0.5, 1.5, 2.5, 3.5, 4.5, 5.5])
         sccbar.set_label('Beam', fontsize=14, weight='bold')
         sccbar.ax.set_yticklabels(['0', '1', '2', '3', '4', '5'])
-        figspccl.savefig(self._plotdir + '/full_spccl_candidates.png')
+        figspccl.savefig(self._plotdir + '/full_spccl_candidates.jpg')
         plt.close(figspccl)
 
         time.sleep(self._spccl_refresh_s)
@@ -268,7 +268,7 @@ class Plotter:
         
         cmap = 'binary'
         
-        fil_fig, fil_axis = plt.subplots(2, 1, figsize=(11.69,8.27), dpi=150)
+        fil_fig, fil_axis = plt.subplots(2, 1, figsize=(10.24, 7.68), frameon=False, dpi=100)
         fil_fig.tight_layout(h_pad=3.25, rect=[0, 0.03, 1, 0.95])
         
         dedispchans = filbothavg.shape[0]
@@ -321,7 +321,7 @@ class Plotter:
             plotdir = os.path.join(self._outdir, 'beam0' + str(nodebeam), 'Plots')
 
         save_start = time.time()
-        fil_fig.savefig(os.path.join(plotdir, str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.png'), bbox_inches = 'tight')#, quality=75)
+        fil_fig.savefig(os.path.join(plotdir, str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.jpg'), bbox_inches = 'tight', quality=95)
         plt.close(fil_fig)
         save_end = time.time()
 
@@ -586,7 +586,7 @@ class Watcher:
 
                                 fmtdm = "{:.2f}".format(highest_snr['DM'])
 
-                                selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + fmtdm + '_beam_' + str(full_beam) + '.png'
+                                selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + fmtdm + '_beam_' + str(full_beam) + '.jpg'
                                 highest_snr = selected.iloc[selected['SNR'].idxmax()]
 
                                 plot_start = time.time()
