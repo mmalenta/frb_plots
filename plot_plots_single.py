@@ -533,21 +533,21 @@ class Watcher:
         if (self._verbose):
             print("Creating plots output directory")
             
-            for ibeam in np.arange(6):
-                beam_dir = self._directory + '/beam0' + str(ibeam) + '/'
-                if os.path.isdir(beam_dir):
-                    try:
-                        os.mkdir(self._directory + '/beam0' + str(ibeam) + '/Plots_single')
-                    except FileExistsError:
-                        if (self._verbose):
-                            print("Directory already exists")
-                else:
+        for ibeam in np.arange(6):
+            beam_dir = self._directory + '/beam0' + str(ibeam) + '/'
+            if os.path.isdir(beam_dir):
+                try:
+                    os.mkdir(self._directory + '/beam0' + str(ibeam) + '/Plots_single')
+                except FileExistsError:
                     if (self._verbose):
-                        print("No directory %s" % (beam_dir))
+                        print("Directory already exists")
+            else:
+                if (self._verbose):
+                    print("No directory %s" % (beam_dir))
             
         if (self._verbose):
             print("Parsing log files")
-            self.GetLogs(self._events_file)
+        self.GetLogs(self._events_file)
         
         #spccl_thread = threading.Thread(target=self.GetNewSpcclFiles)
         #spccl_thread.start()
