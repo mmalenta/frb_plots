@@ -65,7 +65,8 @@ class Plotter:
         plot_padding_samples = int(np.floor(self._plot_pad_s / self._tsamp))
         cand_samples_from_start = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp))
 
-        output_samples = 0
+        output_samples_sub = 0
+        output_samples_full = 0
         plot_skip_samples = 0
         start_padding_added = 0
 
@@ -108,51 +109,50 @@ class Plotter:
         # How many samples to skip from start of the data block
         plot_skip_samples = cand_samples_from_start - plot_padding_samples + start_padding_added
 
-        if (outbands == 1):
-            # Padding on both sides
-            # Currently ignores the pulse width
-            output_samples = int(np.ceil(2 * plot_padding_samples))
-        else:
-            # Padding on both sides + extra DM sweep
-            output_samples = int(np.ceil(2 * plot_padding_samples)) + full_delay_samples - last_band_delay_samples
-            # We have case 4 - add extra 0 padding at the end
-            # We only have to worry about the extra delay when we do a subband dedispersion
-            if (last_band_delay_samples > filfile_padding_samples):
-                zero_padding_samples = int(last_band_delay_samples - filfile_padding_samples)
-                inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
-                if (self._verbose):
-                    print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples))
+        # Padding on both sides
+        # Currently ignores the pulse width
+        output_samples_full = int(np.ceil(2 * plot_padding_samples))
+
+        # Padding on both sides + extra DM sweep
+        output_samples_sub = int(np.ceil(2 * plot_padding_samples)) + full_delay_samples - last_band_delay_samples
+        # We have case 4 - add extra 0 padding at the end
+        # We only have to worry about the extra delay when we do a subband dedispersion
+        if (last_band_delay_samples > filfile_padding_samples):
+            zero_padding_samples = int(last_band_delay_samples - filfile_padding_samples)
+            inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
+            if (self._verbose):
+                print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples))
         
         if (self._verbose):
             print("Candidate plotting:")
-            if (outbands == 1):
-                print("\tFully dedispersed time series")
-            else:
-                print("\tSubband dedispersed")
 
             print("\tInput data length (original): %d" % (original_data_length))
             print("\tInput data length (with all padding included): %d" % (inputdata.shape[1]))
-            print("\tOutput plot samples: %d" % (output_samples))
+            print("\tNumber of dedispersed subbands: %d" % (outbands))
+            print("\tOutput plot samples: %d (subband), %d (full)" % (output_samples_sub, output_samples_full))
             print("\tDM sweep samples: %d" % (full_delay_samples))
             print("\tPadding at the start: %d" % (start_padding_added))
             print("\tSamples skipped at the start: %d" % (plot_skip_samples))
 
 
-        dedispersed = np.zeros((outbands, output_samples))
+        dedispersed_sub = np.zeros((outbands, output_samples_sub))
+        dedispersed_full = np.zeros((1, output_samples_full))
 
         for band in np.arange(outbands):
             bandtop = self._ftop + band * perband * self._fband
             for chan in np.arange(perband):
                 chanfreq = bandtop + chan * self._fband
-                delay = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
-                dedispersed[band, :] = np.add(dedispersed[band, :], inputdata[chan + band * perband, int(plot_skip_samples) + delay : int(plot_skip_samples) + delay + output_samples])
+                delay_sub = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
+                dedispersed_sub[band, :] = np.add(dedispersed_sub[band, :], inputdata[chan + band * perband, int(plot_skip_samples) + delay_sub : int(plot_skip_samples) + delay_sub + output_samples_sub])
+                delay_full = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp))
+                dedispersed_full[0, :] = np.add(dedispersed_full[0, :], inputdata[chan + band * perband, int(plot_skip_samples) + delay_full : int(plot_skip_samples) + delay_full + output_samples_full])
 
         dm_end = time.time()
         
         if (self._verbose):
             print("Dedispersion took %.2fs" % (dm_end - dm_start))
 
-        return dedispersed, start_padding_added
+        return dedispersed_sub, dedispersed_full, start_padding_added
 
     def PlotExtractedCand(self, beam_dir, filename, headsize, nchans, ftop, fband, tsamp, properties, filmjd, ibeam=0, nodebeam=0):
 
@@ -205,18 +205,18 @@ class Plotter:
         fildata = fildata - filband[:, np.newaxis]
         
         # Frequency average the data (i.e. subband dedisperse)
-        filfreqavg, skip_padding = self.Dedisperse(fildata, filmjd, properties, self._dedisp_bands)
+        dedisp_sub, dedisp_full, skip_padding = self.Dedisperse(fildata, filmjd, properties, self._dedisp_bands)
 
         # Time average the data
-        timesamples = int(np.floor(filfreqavg.shape[1] / self._timeavg) * self._timeavg)                
-        filbothavg = filfreqavg[:, :timesamples].reshape(filfreqavg.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
+        timesamples = int(np.floor(dedisp_sub.shape[1] / self._timeavg) * self._timeavg)                
+        dedisp_sub_time_avg = dedisp_sub[:, :timesamples].reshape(dedisp_sub.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
         
         # We are no longer dealing with original samples when the data is averaged
         skip_padding_time_avg = int(np.floor(skip_padding / self._timeavg))
         samples_read_time_avg = int(np.floor(samples_read / self._timeavg))
     
-        datamean = np.mean(filbothavg[:, skip_padding_time_avg : (skip_padding_time_avg + samples_read_time_avg)])
-        datastd = np.std(filbothavg[:, skip_padding_time_avg : (skip_padding_time_avg + samples_read_time_avg)])        
+        datamean = np.mean(dedisp_sub_time_avg[:, skip_padding_time_avg : (skip_padding_time_avg + samples_read_time_avg)])
+        datastd = np.std(dedisp_sub_time_avg[:, skip_padding_time_avg : (skip_padding_time_avg + samples_read_time_avg)])        
 
         ctop = int(np.ceil(datamean + 1.25 * datastd))
         cbottom = int(np.floor(datamean - 0.5 * datastd))
@@ -239,7 +239,7 @@ class Plotter:
         fil_fig, fil_axis = plt.subplots(2, 1, figsize=(10.24, 7.68), frameon=False, dpi=100)
         fil_fig.tight_layout(h_pad=3.25, rect=[0, 0.03, 1, 0.95])
         
-        dedispchans = filbothavg.shape[0]
+        dedispchans = dedisp_sub_time_avg.shape[0]
         delays = np.zeros(dedispchans)
 
         for ichan in np.arange(dedispchans):
@@ -247,7 +247,7 @@ class Plotter:
             delays[ichan] = int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp) / self._timeavg) + 0.95 * self._plot_pad_s / (self._timeavg * self._tsamp)
 
         axboth = fil_axis[0]
-        axboth.imshow(filbothavg, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
+        axboth.imshow(dedisp_sub_time_avg, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
         axboth.plot(delays, np.arange(dedispchans), linewidth=0.5, color='deepskyblue')
         axboth.set_title('Time (' + str(self._timeavg) + '), freq (' + str(self._freqavg) + ') avg', fontsize=11)
         axboth.set_xlabel('Time [s]', fontsize=10)
@@ -258,11 +258,10 @@ class Plotter:
         axboth.set_yticklabels(avg_freq_label_str, fontsize=8)        
 
         # Fully dedisperse the original filterbank data
-        dedispersed, skip_padding = self.Dedisperse(fildata, filmjd, properties, 1)
-        dedispersed = dedispersed / dedispersed.shape[1]
+        dedisp_full = dedisp_full / dedisp_full.shape[1]
         # Average the dedispersed time series
-        dedisp_avg_time = int(np.floor(dedispersed.shape[1] / self._timeavg) * self._timeavg)
-        dedisp_avg = dedispersed[0, :dedisp_avg_time].reshape(1, int(dedisp_avg_time / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg
+        dedisp_avg_time = int(np.floor(dedisp_full.shape[1] / self._timeavg) * self._timeavg)
+        dedisp_full_time_avg = dedisp_full[0, :dedisp_avg_time].reshape(1, int(dedisp_avg_time / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg
 
         dedisp_time_pos = np.linspace(0, int(dedisp_avg_time / self._timeavg), num=9)
         dedisp_time_label = dedisp_time_pos * self._tsamp * self._timeavg + self._plot_pad_s + (properties['MJD'] - filmjd) * 86400.0
@@ -270,7 +269,7 @@ class Plotter:
         dedisp_time_label_str = [fmt(label) for label in dedisp_time_label]
         
         axdedisp = fil_axis[1]
-        axdedisp.plot(dedisp_avg[0, :], linewidth=0.4, color='black')
+        axdedisp.plot(dedisp_full_time_avg[0, :], linewidth=0.4, color='black')
         fmtdm = "{:.2f}".format(properties['DM'])
         axdedisp.axvline(int(dedisp_avg_time / self._timeavg / 2), color='deepskyblue', linewidth=0.5)
         axdedisp.set_ylim()
@@ -280,7 +279,7 @@ class Plotter:
         axdedisp.set_xlabel('Time [s]')
         axdedisp.set_ylabel('Power [arbitrary units]')
         
-        if (np.sum(dedispersed) == 0):
+        if (np.sum(dedisp_full) == 0):
             axdedisp.text(0.5, 0.6, 'Not dedispersed properly - please report!', fontsize=14, weight='bold', color='firebrick',  horizontalalignment='center', verticalalignment='center', transform=axdedisp.transAxes)
         
         if (self._single_pass):
