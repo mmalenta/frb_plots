@@ -6,6 +6,7 @@ import glob
 import json
 import matplotlib.gridspec as gs
 import matplotlib.pyplot as plt
+import multiprocessing
 import numpy as np
 import os
 import pandas as pd
@@ -14,18 +15,15 @@ import sys
 import threading
 import time
 
-from astropy.time import Time
-
 # This class does the actual plotting
 class Plotter:
     
-    def __init__(self, timing, verbose,  maskfile, outdir = './', single_pass=False):
+    def __init__(self, config):
         # General managment
-        self._plotdir = outdir
-        self._mask_file = maskfile
-        self._single_pass = single_pass
-        self._timing = timing
-        self._verbose = verbose
+        self._mask_file = config['mask_file']
+        self._verbose = config['verbose']
+        self._single_pass = config['single_pass']
+        self._timing = config['verbose']
 
         # Filterbank file parameters
         self._nchans = 0
@@ -37,7 +35,7 @@ class Plotter:
         # Extracted candidate plot parameters
         self._timeavg = 16
         self._freqavg = 64
-        self._outdir = outdir
+        self._outdir = config['base_dir']
         self._time_width = 8 # How many time samples we want to have across the averaged profile
 
         # .spccl plots parameters
@@ -50,14 +48,12 @@ class Plotter:
 
         # Dedispersion parameters
         self._disp_const = 0.0
+        # This should really be an option rather than a hardcoded value
         self._filfile_pad_s = 1.0
         self._filfile_pad_mjd = self._filfile_pad_s / 86400.0
         self._plot_pad_s = self._filfile_pad_s / 2.0
         self._dedisp_bands = 0
 
-        if self._verbose:
-            print("Starting the plotter up")
-    
     def Dedisperse(self, inputdata, filmjd, properties, outbands):
     
         dm_start = time.time()
@@ -69,7 +65,8 @@ class Plotter:
         plot_padding_samples = int(np.floor(self._plot_pad_s / self._tsamp))
         cand_samples_from_start = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp))
 
-        output_samples = 0
+        output_samples_sub = 0
+        output_samples_full = 0
         plot_skip_samples = 0
         start_padding_added = 0
 
@@ -112,84 +109,53 @@ class Plotter:
         # How many samples to skip from start of the data block
         plot_skip_samples = cand_samples_from_start - plot_padding_samples + start_padding_added
 
-        if (outbands == 1):
-            # Padding on both sides
-            # Currently ignores the pulse width
-            output_samples = int(np.ceil(2 * plot_padding_samples))
-        else:
-            # Padding on both sides + extra DM sweep
-            output_samples = int(np.ceil(2 * plot_padding_samples)) + full_delay_samples - last_band_delay_samples
-            # We have case 4 - add extra 0 padding at the end
-            # We only have to worry about the extra delay when we do a subband dedispersion
-            if (last_band_delay_samples > filfile_padding_samples):
-                zero_padding_samples = int(last_band_delay_samples - filfile_padding_samples)
-                inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
-                if (self._verbose):
-                    print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples))
+        # Padding on both sides
+        # Currently ignores the pulse width
+        output_samples_full = int(np.ceil(2 * plot_padding_samples))
+
+        # Padding on both sides + extra DM sweep
+        output_samples_sub = int(np.ceil(2 * plot_padding_samples)) + full_delay_samples - last_band_delay_samples
+        # We have case 4 - add extra 0 padding at the end
+        # We only have to worry about the extra delay when we do a subband dedispersion
+        if (last_band_delay_samples > filfile_padding_samples):
+            zero_padding_samples = int(last_band_delay_samples - filfile_padding_samples)
+            inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
+            if (self._verbose):
+                print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples))
         
         if (self._verbose):
             print("Candidate plotting:")
-            if (outbands == 1):
-                print("\tFully dedispersed time series")
-            else:
-                print("\tSubband dedispersed")
 
             print("\tInput data length (original): %d" % (original_data_length))
             print("\tInput data length (with all padding included): %d" % (inputdata.shape[1]))
-            print("\tOutput plot samples: %d" % (output_samples))
+            print("\tNumber of dedispersed subbands: %d" % (outbands))
+            print("\tOutput plot samples: %d (subband), %d (full)" % (output_samples_sub, output_samples_full))
             print("\tDM sweep samples: %d" % (full_delay_samples))
             print("\tPadding at the start: %d" % (start_padding_added))
             print("\tSamples skipped at the start: %d" % (plot_skip_samples))
 
 
-        dedispersed = np.zeros((outbands, output_samples))
+        dedispersed_sub = np.zeros((outbands, output_samples_sub))
+        dedispersed_full = np.zeros((1, output_samples_full))
 
         for band in np.arange(outbands):
             bandtop = self._ftop + band * perband * self._fband
             for chan in np.arange(perband):
                 chanfreq = bandtop + chan * self._fband
-                delay = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
-                dedispersed[band, :] = np.add(dedispersed[band, :], inputdata[chan + band * perband, int(plot_skip_samples) + delay : int(plot_skip_samples) + delay + output_samples])
+                delay_sub = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
+                dedispersed_sub[band, :] = np.add(dedispersed_sub[band, :], inputdata[chan + band * perband, int(plot_skip_samples) + delay_sub : int(plot_skip_samples) + delay_sub + output_samples_sub])
+                delay_full = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp))
+                dedispersed_full[0, :] = np.add(dedispersed_full[0, :], inputdata[chan + band * perband, int(plot_skip_samples) + delay_full : int(plot_skip_samples) + delay_full + output_samples_full])
 
         dm_end = time.time()
         
         if (self._verbose):
             print("Dedispersion took %.2fs" % (dm_end - dm_start))
 
-        return dedispersed, start_padding_added       
+        return dedispersed_sub, dedispersed_full, start_padding_added
 
-    def PlotSpcclCands(self, candidates):
-
-        last_mjd = candidates['MJD'].values[-1]
-        first_mjd = last_mjd - self._spccl_length_mjd
-
-        candidates_to_plot = candidates.loc[(candidates['MJD'] >= first_mjd) & (candidates['MJD'] <= last_mjd)]
-
-        cmap = matplotlib.colors.ListedColormap(self._beam_colours)
-        bound = [0, 1, 2, 3 , 4, 5, 6]
-        
-        norm = matplotlib.colors.BoundaryNorm(bound, cmap.N, clip=True)
-    
-        print("Plotting the full candidates")
-        
-        figspccl = plt.figure(figsize=(15,10))
-        axspccl = figspccl.gca()
-        axspccl.ticklabel_format(useOffset=False)
-        candsc = axspccl.scatter(x=candidates_to_plot['MJD'], y=candidates_to_plot['DM'] + 1, s=candidates_to_plot['SNR'], c=candidates_to_plot['Beam'], norm=norm, cmap=cmap)
-        axspccl.set_xlim(first_mjd - self._spccl_pad, last_mjd + self._spccl_pad)
-        axspccl.set_xlabel('MJD', fontsize=14, weight='bold')
-        axspccl.set_ylabel('DM', fontsize=14, weight='bold')
-        axspccl.set_yscale('log')
-        sccbar = figspccl.colorbar(candsc, ticks=[0.5, 1.5, 2.5, 3.5, 4.5, 5.5])
-        sccbar.set_label('Beam', fontsize=14, weight='bold')
-        sccbar.ax.set_yticklabels(['0', '1', '2', '3', '4', '5'])
-        figspccl.savefig(self._plotdir + '/full_spccl_candidates.png')
-        plt.close(figspccl)
-
-        time.sleep(self._spccl_refresh_s)
-    
     def PlotExtractedCand(self, beam_dir, filename, headsize, nchans, ftop, fband, tsamp, properties, filmjd, ibeam=0, nodebeam=0):
-        
+
         # Update the filterbank file parameters
         self._nchans = nchans
         self._tsamp = tsamp
@@ -209,7 +175,11 @@ class Plotter:
             print("\tChannel bandwidth: %.8f" % (self._fband))
             print("\tBottom frequency: %.8f" % (self._fbottom))
 
-        mask = np.loadtxt(self._mask_file)
+        # There must be a better way of doing it once only
+        if (not self._mask_file == None):
+            mask = np.loadtxt(self._mask_file)
+        else:
+            mask = np.ones(nchans)
 
         # How many time samples we have across the pulse width
         pulse_samples = properties['Width'] * 1e-03 / self._tsamp
@@ -224,28 +194,26 @@ class Plotter:
         else:
             self._timeavg = int(np.floor(pulse_samples / self._time_width))
         
-        
+        self._tsamp = self._tsamp * self._timeavg
         # Read original data
         fildata = np.reshape(np.fromfile(os.path.join(beam_dir, filename), dtype='B')[headsize:], (-1, nchans)).T
-        print("Read %d time samples" % (fildata.shape[1]))
-        samples_read = fildata.shape[1]
+        if (self._verbose):
+            print("Read %d time samples" % (fildata.shape[1]))
         fildata = fildata * mask[:, np.newaxis]
         filband = np.mean(fildata[:, 128:], axis=1)
         fildata = fildata - filband[:, np.newaxis]
-        
-        # Frequency average the data (i.e. subband dedisperse)
-        filfreqavg, skip_padding = self.Dedisperse(fildata, filmjd, properties, self._dedisp_bands)
 
-        # Time average the data
-        timesamples = int(np.floor(filfreqavg.shape[1] / self._timeavg) * self._timeavg)                
-        filbothavg = filfreqavg[:, :timesamples].reshape(filfreqavg.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
-        
-        # We are no longer dealing with original samples when the data is averaged
-        skip_padding_time_avg = int(np.floor(skip_padding / self._timeavg))
-        samples_read_time_avg = int(np.floor(samples_read / self._timeavg))
- 
-        datamean = np.mean(filbothavg[:, skip_padding_time_avg : (skip_padding_time_avg + samples_read_time_avg)])
-        datastd = np.std(filbothavg[:, skip_padding_time_avg : (skip_padding_time_avg + samples_read_time_avg)])        
+        # Time average the original data
+        timesamples = int(np.floor(fildata.shape[1] / self._timeavg) * self._timeavg) 
+        time_avg_data = fildata[:, :timesamples].reshape(fildata.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
+
+        # Frequency average the data (i.e. subband dedisperse)
+        dedisp_sub, dedisp_full, skip_padding = self.Dedisperse(time_avg_data, filmjd, properties, self._dedisp_bands)
+        dedisp_full = dedisp_full / dedisp_full.shape[1]
+       
+
+        datamean = np.mean(dedisp_sub[:, skip_padding : (skip_padding + timesamples)])
+        datastd = np.std(dedisp_sub[:, skip_padding : (skip_padding + timesamples)])        
 
         ctop = int(np.ceil(datamean + 1.25 * datastd))
         cbottom = int(np.floor(datamean - 0.5 * datastd))
@@ -259,24 +227,24 @@ class Plotter:
         avg_freq_label_str = [fmt(label) for label in avg_freq_label]
         
         # Prepare the time ticks
-        avg_time_pos = np.linspace(0, (int)(timesamples / self._timeavg), num=5)
-        avg_time_label = avg_time_pos * self._tsamp * self._timeavg + skip_padding * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._plot_pad_s)
+        avg_time_pos = np.linspace(0, dedisp_sub.shape[1], num=5)
+        avg_time_label = avg_time_pos * self._tsamp + skip_padding * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._plot_pad_s)
         avg_time_label_str = [fmt(label) for label in avg_time_label]
         
         cmap = 'binary'
         
-        fil_fig, fil_axis = plt.subplots(2, 1, figsize=(11.69,8.27), dpi=150)
+        fil_fig, fil_axis = plt.subplots(2, 1, figsize=(10.24, 7.68), frameon=False, dpi=100)
         fil_fig.tight_layout(h_pad=3.25, rect=[0, 0.03, 1, 0.95])
         
-        dedispchans = filbothavg.shape[0]
+        dedispchans = dedisp_sub.shape[0]
         delays = np.zeros(dedispchans)
 
         for ichan in np.arange(dedispchans):
             chanfreq = self._ftop + ichan * self._fband * self._freqavg
-            delays[ichan] = int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp) / self._timeavg) + 0.95 * self._plot_pad_s / (self._timeavg * self._tsamp)
+            delays[ichan] = int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp)) + 0.95 * self._plot_pad_s / (self._tsamp)
 
         axboth = fil_axis[0]
-        axboth.imshow(filbothavg, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
+        axboth.imshow(dedisp_sub, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
         axboth.plot(delays, np.arange(dedispchans), linewidth=0.5, color='deepskyblue')
         axboth.set_title('Time (' + str(self._timeavg) + '), freq (' + str(self._freqavg) + ') avg', fontsize=11)
         axboth.set_xlabel('Time [s]', fontsize=10)
@@ -286,22 +254,15 @@ class Plotter:
         axboth.set_yticks(avg_freq_pos)
         axboth.set_yticklabels(avg_freq_label_str, fontsize=8)        
 
-        # Fully dedisperse the original filterbank data
-        dedispersed, skip_padding = self.Dedisperse(fildata, filmjd, properties, 1)
-        dedispersed = dedispersed / dedispersed.shape[1]
-        # Average the dedispersed time series
-        dedisp_avg_time = int(np.floor(dedispersed.shape[1] / self._timeavg) * self._timeavg)
-        dedisp_avg = dedispersed[0, :dedisp_avg_time].reshape(1, int(dedisp_avg_time / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg
-
-        dedisp_time_pos = np.linspace(0, int(dedisp_avg_time / self._timeavg), num=9)
-        dedisp_time_label = dedisp_time_pos * self._tsamp * self._timeavg + self._plot_pad_s + (properties['MJD'] - filmjd) * 86400.0
-        dedisp_time_label = dedisp_time_pos * self._tsamp * self._timeavg + skip_padding * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._plot_pad_s)        
+        dedisp_time_pos = np.linspace(0, dedisp_full.shape[1], num=9)
+        dedisp_time_label = dedisp_time_pos * self._tsamp + self._plot_pad_s + (properties['MJD'] - filmjd) * 86400.0
+        dedisp_time_label = dedisp_time_pos * self._tsamp + skip_padding * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._plot_pad_s)        
         dedisp_time_label_str = [fmt(label) for label in dedisp_time_label]
         
         axdedisp = fil_axis[1]
-        axdedisp.plot(dedisp_avg[0, :], linewidth=0.4, color='black')
+        axdedisp.plot(dedisp_full[0, :], linewidth=0.4, color='black')
         fmtdm = "{:.2f}".format(properties['DM'])
-        axdedisp.axvline(int(dedisp_avg_time / self._timeavg / 2), color='deepskyblue', linewidth=0.5)
+        axdedisp.axvline(int(dedisp_full.shape[1] / 2), color='deepskyblue', linewidth=0.5)
         axdedisp.set_ylim()
         axdedisp.set_title('Dedispersed time series, DM ' + fmtdm)
         axdedisp.set_xticks(dedisp_time_pos)
@@ -309,7 +270,7 @@ class Plotter:
         axdedisp.set_xlabel('Time [s]')
         axdedisp.set_ylabel('Power [arbitrary units]')
         
-        if (np.sum(dedispersed) == 0):
+        if (np.sum(dedisp_full) == 0):
             axdedisp.text(0.5, 0.6, 'Not dedispersed properly - please report!', fontsize=14, weight='bold', color='firebrick',  horizontalalignment='center', verticalalignment='center', transform=axdedisp.transAxes)
         
         if (self._single_pass):
@@ -317,23 +278,25 @@ class Plotter:
         else:
             plotdir = os.path.join(self._outdir, 'beam0' + str(nodebeam), 'Plots')
 
-        fil_fig.savefig(os.path.join(plotdir, str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.png'), bbox_inches = 'tight')#, quality=75)
+        save_start = time.time()
+        fil_fig.savefig(os.path.join(plotdir, str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.jpg'), bbox_inches = 'tight', quality=95)
         plt.close(fil_fig)
-
-    # This might do something in the future
-    def PlotDist(self, filename, selected):
-        print("Empty")
+        save_end = time.time()
+        if (self._verbose):
+            print("Saved figure for beam %d in %.4fs" % (ibeam, (save_end - save_start)))
 
 # This is an overarching class that watches the directories and detects any changes
 class Watcher:
     
-    def __init__(self, data_dir, events_file, mask_file, timing=False, verbose=False, single_pass=False):
-        self._events_file = events_file
-        self._directory = data_dir
-        self._mask_file = mask_file
-        self._single_pass = single_pass
-        self._timing = timing
-        self._verbose = verbose
+    def __init__(self, config):
+        self._events_file = config['events_file']
+        self._directory = config['base_dir']
+        self._mask_file = config['mask_file']
+        self._single_pass = config['single_pass']
+        self._timing = config['timing']
+        self._verbose = config['verbose']
+        self._number_beams = config['number_beams']
+        self._number_processes = config['number_proc']
         self._watching = True
         self._spccl_wait = 5.0 # How long to wait (in seconds) for missing/empty .spccl files
         self._beam_skip = False
@@ -353,8 +316,224 @@ class Watcher:
             if self._timing:
                 print("Enabling timing")
         
-        self._plotter = Plotter(self._timing, self._verbose, self._mask_file, self._directory, self._single_pass)
+
+        if (self._verbose):
+            print("Creating plots output directory for %d beams" % (self._number_beams))
+
+        for ibeam in np.arange(self._number_beams):
+            beamdir = os.path.join(self._directory, 'beam0' + str(ibeam))
+
+            if os.path.isdir(beamdir):
+
+                try:
+                    if (self._single_pass):
+                        os.mkdir(os.path.join(beamdir, 'Plots_single'))
+                    else:
+                        os.mkdir(os.path.join(beamdir, 'Plots'))
+
+                except FileExistsError:
+                    if (self._verbose):
+                        print("Directory already exists")
+            else:
+                if (self._verbose):
+                    print("No directory %s" % (beamdir))
+                    # Need to quit here if we can't find beam directories
+
+        if (self._verbose):
+            print("Parsing log files")
+        self.GetLogs(self._events_file)
+
+    def GetNewFilFiles(self, procid, config):
     
+        verbose = config['verbose']
+        beams = config['beams']
+        single_pass = config['single_pass']
+        beam_info = config['beam_info']
+        spccl_wait = config['spccl_wait']
+        header_names = config['header_names']
+        fil_header_size = config['fil_header_size']
+
+        if verbose:
+            print("%s: Process %d watching for .fil files in beams %s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), procid, beams))
+
+        plotter = Plotter(config)
+
+        watching = True
+
+        fil_latest = np.zeros(6)
+        new_fil_files = []
+        
+        waited = 0.0
+
+        print ()
+
+        while(watching):
+
+            start_plot = time.time()
+
+            for ibeam in beams:
+
+                beam_dir = os.path.join(config['base_dir'], 'beam0' + str(ibeam))
+                new_fil_files = []
+
+                if os.path.isdir(beam_dir):
+                    full_beam = beam_info['beam'].values[ibeam]
+                    beam_ra = beam_info['ra'].values[ibeam]
+                    beam_dec = beam_info['dec'].values[ibeam]
+
+                fil_files = os.scandir(beam_dir)
+                for ff in fil_files:
+                    if ((ff.name.endswith('fil')) & (ff.stat().st_mtime > fil_latest[ibeam])):
+                        new_fil_files.append([ff.name, ff.stat().st_mtime])
+
+                new_len = len(new_fil_files)
+                if (verbose):
+                    print("%s, beam %d: Found %d new filterbank files" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, new_len))    
+
+                if (new_len > 0):
+                    # Will hopefully get .spccl written
+                    fil_latest[ibeam] = max(new_fil_files, key = lambda nf: nf[1])[1]
+
+                    latest_fil_mjd = 0.0
+                    for new_ff in new_fil_files:
+                        with open(os.path.join(beam_dir, new_ff[0]), mode='rb') as file:
+                            mjdtime = self.GetHeaderValue(file, "tstart", "double")
+                            if mjdtime > latest_fil_mjd:
+                                latest_fil_mjd = mjdtime
+                    
+                    if (verbose):
+                        print("%s, beam %d: Latest .fil file MJD %.10f" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, latest_fil_mjd))
+
+                    cand_file = glob.glob(beam_dir + '/*.spccl')
+                    # Wait until we get the .spccl file - it should be saved at some point
+                    if ( not single_pass):
+                        while ( (len(cand_file) == 0) and (waited < spccl_wait) ):
+                            if (verbose):
+                                print("%s, beam %d: No .spccl file found yet..." % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
+
+                            time.sleep(0.1)
+                            cand_file = glob.glob(beam_dir + '/*.spccl')
+                            waited = waited + 0.1
+
+                        if (waited >= spccl_wait):
+                            if (verbose):
+                                print("%s, beam %d: WARNING: no walid .spccl file after 5.0s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
+                            fil_latest[ibeam] = 0
+                            continue
+                    # Bail out - this should not happen in singe pass, as we should always have .spccl file when extracted .fil files are found
+                    else:
+                        if (len(cand_file) == 0):
+                            print("%s, beam %d: ERROR: did not find an .spccl file" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
+                            # Continue to the next beam
+                            continue
+
+                    waited = 0.0
+                    # At this stage we can be sure there is an .spccl file for a given beam
+                    beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=header_names, skiprows=1)
+                    # This should not happen at all in during proper operations
+                    if (beam_cands.size == 0):
+                        if ( not single_pass):
+                            while( (beam_cands.size == 0) and (waited < spccl_wait / 2.0) ):
+                                if (verbose):
+                                    print("No filled .spccl file for beam %d yet..." % (ibeam))
+                                time.sleep(0.1)
+                                beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=header_names, skiprows=1)
+                                waited = waited + 0.1
+                    
+                            if (waited >= spccl_wait / 2.0):
+                                if (verbose):
+                                    print("%s, beam %d: WARNING: empty .spccl file after 5.0s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
+                                fil_latest[ibeam] = 0
+                                continue
+
+                        else:
+                            print("%s, beam %d: ERROR: found an empty .spccl file %s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, cand_file[0]))
+                            # Continue to the next beam and hope for the best next time
+                            continue
+                        
+                    latest_cand_mjd = beam_cands.tail(1)['MJD'].values[0]
+                    if (verbose):
+                        print("%s, beam %d: Latest candidate MJD: %.10f" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, latest_cand_mjd))
+
+                    waited = 0.0
+                    # Don't wait for an updated .spccl file in single-pass mode - we work with what we have
+                    if ( not single_pass):
+                        while ( (latest_cand_mjd < latest_fil_mjd) and (waited < spccl_wait / 2.0)):
+                            time.sleep(0.1)
+                            beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=header_names, skiprows=1)
+                            latest_cand_mjd = beam_cands.tail(1)['MJD'].values[0]
+                            waited = waited + 0.1
+                            if (verbose):
+                                print("%s, beam %d: Waiting for an updated .spccl file..." % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
+                                print("%s, beam %d: Latest candidate MJD: %.10f" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, latest_cand_mjd))
+
+                        if (waited >= spccl_wait / 2.0):
+                            if (verbose):
+                                print("%s, beam %d: WARNING: no up-to-date candidates in the .spccl file." % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
+                            fil_latest[ibeam] = 0
+                            continue
+
+                    if (single_pass):
+                        extra_file = os.path.join(beam_dir, 'Plots_single/used_candidates.spccl.extra')
+                        extra_full_file = os.path.join(beam_dir, 'Plots_single/used_candidates.spccl.extra.full')
+                    else:
+                        extra_file = os.path.join(beam_dir, 'Plots/used_candidates.spccl.extra')
+                        extra_full_file = os.path.join(beam_dir, 'Plots/used_candidates.spccl.extra.full')
+
+                    # At this stage we can be sure there are valid candidates for a given beam
+                    for new_ff in new_fil_files:
+                        if (verbose):
+                            print("%s, beam %d: Finding a match for file %s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, new_ff[0]))
+                        
+                        with open(os.path.join(beam_dir, new_ff[0]), mode='rb') as file:
+                            nchans = self.GetHeaderValue(file, "nchans", "int")
+                            ftop = self.GetHeaderValue(file, "fch1", "double")
+                            fband = -1.0 * np.abs(self.GetHeaderValue(file, "foff", "double")) # Make sure bandwidth is negative
+                            tsamp = self.GetHeaderValue(file, "tsamp", "double")
+                            mjdtime = self.GetHeaderValue(file, "tstart", "double")
+            
+                        selected = (beam_cands.loc[(beam_cands['MJD'] >= mjdtime) & (beam_cands['MJD'] <= mjdtime + 2 * self._mjd_pad)]).reset_index()
+
+                        if (selected.shape[0] > 0):
+                            
+                            if self._verbose:
+                                print("Found %d matching candidates" % (selected.shape[0]))
+
+                            highest_snr = selected.iloc[selected['SNR'].idxmax()]
+                            selected['Beam'] = full_beam
+                            selected['RA'] = beam_ra
+                            selected['Dec'] = beam_dec
+                            selected['File'] = new_ff[0]
+
+                            fmtdm = "{:.2f}".format(highest_snr['DM'])
+
+                            selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + fmtdm + '_beam_' + str(full_beam) + '.jpg'
+                            highest_snr = selected.iloc[selected['SNR'].idxmax()]
+
+                            plot_start = time.time()
+                            plotter.PlotExtractedCand(beam_dir, new_ff[0], fil_header_size, nchans, ftop, fband, tsamp, highest_snr, mjdtime, full_beam, ibeam)
+                            plot_end = time.time()
+                            if (self._verbose):
+                                print("Plotting took %.2fs for beam %d" % (plot_end - plot_start, ibeam))
+
+                            with open(extra_full_file, 'a') as f:
+                                selected.to_csv(f, sep='\t', header=False, float_format="%.4f", index=False, index_label=False)
+
+                            with open(extra_file, 'a') as f:
+                                f.write("%d\t%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (0, highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
+                            
+                            if (verbose):
+                                print("\n\n")
+
+                        else:
+                            print("%s, beam %d: ERROR: did not find matching candidates" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
+
+
+            if (single_pass):
+                watching = False
+            else:
+                time.sleep(5)
+
     def GetHeaderValue(self, file, key, type):
         to_read = len(key)
         step_back = -1 * (to_read - 1)
@@ -379,231 +558,6 @@ class Watcher:
 
         return value
 
-    def GetNewSpcclFiles(self):
-        if self._verbose:
-            print("Watching for .spccl files")
-    
-        total_cands = np.zeros(6)
-        new_cands = np.zeros(6)
-        full_cands = pd.DataFrame()
-    
-        while self._watching:
-            
-            for ibeam in np.arange(self._nbeams):
-                beam_dir = self._directory + '/beam0' + str(ibeam) + '/'
-                
-                if os.path.isdir(beam_dir):
-
-                    cand_file = glob.glob(beam_dir + '/*.spccl')
-                    print(cand_file)
-                    if (len(cand_file) != 0):
-                        cand_file = cand_file[0]
-                        if (self._verbose):
-                            print("Found candidate file for beam %d" % (ibeam))
-                            print(cand_file)
-
-                        skipcands = int(1 + total_cands[ibeam])
-                        print(skipcands)
-                        beam_cands = pd.read_csv(cand_file, sep='\s+', names=self._header_names, skiprows=skipcands)
-                        beam_cands['Beam'] = ibeam
-                        new_cands[ibeam] = beam_cands.shape[0]
-                        total_cands[ibeam] = total_cands[ibeam] + new_cands[ibeam]
-                        
-                        full_cands = full_cands.append(beam_cands)
-                        
-                        if (self._verbose):
-                            print("Found %d new candidates for beam %d" % (new_cands[ibeam], ibeam))
-                            print("Total of %d candidates for beam %d" % (total_cands[ibeam], ibeam))
-                else:
-                    if (self._verbose):
-                        print("No directory %s" % (beam_dir))
-            self._plotter.PlotSpcclCands(full_cands)
-            
-    
-    def GetNewFilFiles(self):
-        
-        if self._verbose:
-            print("Watching for .fil files")
-        
-        fil_latest = np.zeros(6)
-        new_fil_files = []
-        
-        waited = 0.0
-
-        while self._watching:
-            
-            start_plot = time.time()
-            print (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
-            
-            for ibeam in np.arange(self._nbeams):
-                
-                beam_dir = os.path.join(self._directory, 'beam0' + str(ibeam))
-                new_fil_files = []
-
-                if os.path.isdir(beam_dir):
-
-                    full_beam = self._beam_info['beam'].values[ibeam]
-                    beam_ra = self._beam_info['ra'].values[ibeam]
-                    beam_dec = self._beam_info['dec'].values[ibeam]
-                    
-                    fil_files = os.scandir(beam_dir)
-                    for ff in fil_files:
-                        if ((ff.name.endswith('fil')) & (ff.stat().st_mtime > fil_latest[ibeam])):
-                            new_fil_files.append([ff.name, ff.stat().st_mtime])
-
-                    new_len = len(new_fil_files)
-                    print (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
-                    print("Found %d new filterbank files for beam %d" % (new_len, ibeam))
-
-                    if new_len > 0:
-
-                        # Will hopefully get .spccl written
-                        fil_latest[ibeam] = max(new_fil_files, key = lambda nf: nf[1])[1]
-
-                        latest_fil_mjd = 0.0
-                        for new_ff in new_fil_files:
-                            with open(os.path.join(beam_dir, new_ff[0]), mode='rb') as file:
-                                mjdtime = self.GetHeaderValue(file, "tstart", "double")
-                                if mjdtime > latest_fil_mjd:
-                                    latest_fil_mjd = mjdtime
-
-                        print("Latest .fil file MJD: %.10f" % (latest_fil_mjd))
-
-                        cand_file = glob.glob(beam_dir + '/*.spccl')
-                        # Wait until we get the .spccl file - it should be saved at some point
-                        waited = 0.0
-                        if ( not self._single_pass):
-                            while ( (len(cand_file) == 0) and (waited < self._spccl_wait) ):
-                                if self._verbose:
-                                    print("No .spccl file for beam %d yet..." % (ibeam))
-
-                                time.sleep(0.1)
-                                cand_file = glob.glob(beam_dir + '/*.spccl')
-                                waited = waited + 0.1
-
-                            if (waited >= self._spccl_wait):
-                                if (self._verbose):
-                                    print("WARNING: no walid .spccl file for beam %d after 5.0s" % (ibeam))
-                                fil_latest[ibeam] = 0
-                                continue
-
-                        # Bail out - this should not happen, as we should always have .spccl file when extracted .fil files are found
-                        else:
-                            if (len(cand_file) == 0):
-                                print("ERROR: did not find an .spccl file")
-                                # Continue to the next beam
-                                continue
-
-                        waited = 0.0
-                        # At this stage we can be sure there is an .spccl file for a given beam
-                        beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
-                        # This should not happen at all in during proper operations
-                        if (beam_cands.size == 0):
-                            
-                            if ( not self._single_pass):
-                                while( (beam_cands.size == 0) and (waited < self._spccl_wait / 2.0) ):
-                                    if self._verbose:
-                                        print("No filled .spccl file for beam %d yet..." % (ibeam))
-                                    time.sleep(0.1)
-                                    beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
-                                    waited = waited + 0.1
-                        
-                                if (waited >= self._spccl_wait / 2.0):
-                                    if (self._verbose):
-                                        print("WARNING: empty .spccl file for beam %d after 5.0s" % (ibeam))
-                                    fil_latest[ibeam] = 0
-                                    continue
-
-                            else:
-                                print("ERROR: found an empty .spccl file %s" % (cand_file[0]))
-                                # Continue to the next beam and hope for the best next time
-                                continue
-
-                        latest_cand_mjd = beam_cands.tail(1)['MJD'].values[0]
-                        print("Latest candidate MJD: %.10f" % (latest_cand_mjd))
-                        #print(fil_latest)
-
-                        waited = 0.0
-                        # Don't wait for an updated .spccl file in single-pass mode - we work with what we have
-                        if ( not self._single_pass):
-                            while ( (latest_cand_mjd < latest_fil_mjd) and (waited < self._spccl_wait / 2.0)):
-                                time.sleep(0.1)
-                                beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=self._header_names, skiprows=1)
-                                latest_cand_mjd = beam_cands.tail(1)['MJD'].values[0]
-                                waited = waited + 0.1
-                                if self._verbose:
-                                    print("Waiting for an updated .spccl file for beam %d..." % (ibeam))
-                                    print("Latest candidate MJD: %.10f" % (latest_cand_mjd))
-
-                            if (waited >= self._spccl_wait / 2.0):
-                                if (self._verbose):
-                                    print("WARNiNG: no up-to-date candidates in the .spccl file for beam %d..." % (ibeam))
-                                fil_latest[ibeam] = 0
-                                continue
-
-                        if (self._single_pass):
-                            extra_file = os.path.join(beam_dir, 'Plots_single/used_candidates.spccl.extra')
-                            extra_full_file = os.path.join(beam_dir, 'Plots_single/used_candidates.spccl.extra.full')
-                        else:
-                            extra_file = os.path.join(beam_dir, 'Plots/used_candidates.spccl.extra')
-                            extra_full_file = os.path.join(beam_dir, 'Plots/used_candidates.spccl.extra.full')
-
-                        # At this stage we can be sure there are valid candidates for a given beam
-                        for new_ff in new_fil_files:
-                            print("Finding a match for file %s" % (new_ff[0]))
-                            
-                            with open(os.path.join(beam_dir, new_ff[0]), mode='rb') as file:
-                                nchans = self.GetHeaderValue(file, "nchans", "int")
-                                ftop = self.GetHeaderValue(file, "fch1", "double")
-                                fband = -1.0 * np.abs(self.GetHeaderValue(file, "foff", "double")) # Make sure bandwidth is negative
-                                tsamp = self.GetHeaderValue(file, "tsamp", "double")
-                                mjdtime = self.GetHeaderValue(file, "tstart", "double")
-                            
-                            selected = (beam_cands.loc[(beam_cands['MJD'] >= mjdtime) & (beam_cands['MJD'] <= mjdtime + 2 * self._mjd_pad)]).reset_index()
-
-                            if (selected.shape[0] > 0):
-                                
-                                if self._verbose:
-                                    print("Found %d matching candidates" % (selected.shape[0]))
-
-                                highest_snr = selected.iloc[selected['SNR'].idxmax()]
-                                selected['Beam'] = full_beam
-                                selected['RA'] = beam_ra
-                                selected['Dec'] = beam_dec
-                                selected['File'] = new_ff[0]
-
-                                fmtdm = "{:.2f}".format(highest_snr['DM'])
-
-                                selected['Plot'] = str(highest_snr['MJD']) + '_DM_' + fmtdm + '_beam_' + str(full_beam) + '.png'
-                                highest_snr = selected.iloc[selected['SNR'].idxmax()]
-
-                                self._plotter.PlotExtractedCand(beam_dir, new_ff[0], self._headsize, nchans, ftop, fband, tsamp, highest_snr, mjdtime, full_beam, ibeam)
-
-                                with open(extra_full_file, 'a') as f:
-                                    selected.to_csv(f, sep='\t', header=False, float_format="%.4f", index=False, index_label=False)
-
-                                with open(extra_file, 'a') as f:
-                                    f.write("%d\t%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (0, highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
-
-                                print("\n\n")
-
-                            else:
-                                print("Something went wrong - did not find matching candidates")
-                            
-                else:
-                    if (self._verbose):
-                        print("No directory %s" % (beam_dir))
-
-            end_plot = time.time()
-            
-            if (self._verbose):
-                print("Took %.2fs to plot" % (end_plot - start_plot))
-
-            if (self._single_pass):
-                self._watching = False
-            else: 
-                time.sleep(5)
-    
     def GetLogs(self, logfile):
         with open(logfile) as f:
             lines = f.readlines()
@@ -620,41 +574,50 @@ class Watcher:
         log_start_utc = json.loads(startevent)['utc']
         log_end_utc = json.loads(endevent)['utc']
         self._beam_info = log_info
-    
+
     def Watch(self):
-        print("I am watching")
-        
+
+        process_pool = []
+
         if (self._verbose):
-            print("Creating plots output directory")
-            
-        for ibeam in np.arange(6):
-            beamdir = os.path.join(self._directory, 'beam0' + str(ibeam))
-            if os.path.isdir(beamdir):
+            print("Launching the processes")
 
-                try:
-                    if (self._single_pass):
-                        os.mkdir(os.path.join(beamdir, 'Plots_single'))
-                    else:
-                        os.mkdir(os.path.join(beamdir, 'Plots'))
+        if (self._number_processes > self._number_beams):
+            if (self._verbose):
+                print("WARNING: More processes than beams requested; reducing to the number of beams")
+            self._number_processes = self._number_beams
 
-                except FileExistsError:
-                    if (self._verbose):
-                        print("Directory already exists")
+        rem_beam = 0
+
+        if ( (self._number_beams % self._number_processes) == 0):
+            beams_per_process = int(self._number_beams / self._number_processes)
+        else:
+            beams_per_process = int(np.floor(self._number_beams / self._number_processes))
+            rem_beam = self._number_beams - beams_per_process * (self._number_processes)
+
+        configuration = {'verbose': self._verbose,
+                        'single_pass': self._single_pass,
+                        'base_dir': self._directory,
+                        'beam_info': self._beam_info,
+                        'spcc_wait': self._spccl_wait,
+                        'header_names': self._header_names,
+                        'fil_header_size': self._headsize,
+                        'spccl_wait': self._spccl_wait,
+                        'mask_file': self._mask_file}
+
+        for iproc in np.arange(self._number_processes):
+            if ( iproc < (self._number_processes - 1)):
+                configuration['beams'] = np.arange(beams_per_process) + iproc * beams_per_process
             else:
-                if (self._verbose):
-                    print("No directory %s" % (beamdir))
-                    # Need to quit here if we can't find beam directories
+                configuration['beams'] = np.arange(beams_per_process + rem_beam) + iproc * beams_per_process
 
-        if (self._verbose):
-            print("Parsing log files")
-            self.GetLogs(self._events_file)
+            process = multiprocessing.Process(target=self.GetNewFilFiles, args=(iproc, configuration))
+            process_pool.append(process)
+            process.start()
+            del configuration['beams']
+
         
-        #spccl_thread = threading.Thread(target=self.GetNewSpcclFiles)
-        #spccl_thread.start()
-        filthread = threading.Thread(target=self.GetNewFilFiles)
-        filthread.start()
-        filthread.join()
-        #spccl_thread.join()
+    
 
 def main():
     
@@ -667,30 +630,61 @@ def main():
     parser.add_argument("-m", "--mask", help="Channel mask file", type=str)
     parser.add_argument("-d", "--directory", help="Base data directory", required=True, type=str)
     parser.add_argument("-e", "--events", help="Pipeline events log file", type=str)
+    parser.add_argument("-n", "--nbeams", help="Number of beams to watch", required=False, type=int, default=6)
+    parser.add_argument("-p", "--nproc", help="Number of plotting processes to run", required=False, type=int, default=1)
 
     arguments = parser.parse_args()
 
     verbose = arguments.verbose
-    basedir = os.path.abspath(arguments.directory)
-    maskfile = arguments.mask
-    eventsfile = arguments.events
+    base_dir = os.path.abspath(arguments.directory)
+    mask_file = arguments.mask
+    events_file = arguments.events
+    number_beams = arguments.nbeams
+    number_proc = arguments.nproc
 
-    if (maskfile == None):
+    if (number_beams == 0):
+        print("ERROR: I need one or more beams to watch")
+        sys.exit(1)
+
+    if (number_proc == 0):
+        print("ERROR: I need one or process(es) to run")
+        sys.exit(1)
+
+    if (mask_file == None):
         if (verbose):
             print("Will not mask any channels")
+    else:
+        mask_file = os.path.abspath(mask_file)
+        if (not os.path.isfile(mask_file)):
+            print("ERROR: No mask file %s" % (mask_file))
+            sys.exit(1)
 
     if (verbose):
-        print("Will use directory %s" % (basedir))
+        print("Will use directory %s" % (base_dir))
 
-    if (eventsfile == None):
-        eventsfile = 'pipeline_events.log'
+    if (events_file == None):
+        events_file = 'pipeline_events.log'
             
-    eventsfile = os.path.abspath(eventsfile)
+    events_file = os.path.abspath(events_file)
+
+    if (not os.path.isfile(events_file)):
+        print("ERROR: No events file %s" % (events_file))
+        sys.exit(1)
+
 
     if (verbose):
-        print("Will use events file %s" % (eventsfile))
+        print("Will use events file %s" % (events_file))
     
-    watcher = Watcher(basedir, eventsfile, maskfile, arguments.timing, verbose, arguments.single)
+    configuration = {'verbose': verbose,
+                    'timing': arguments.timing,
+                    'single_pass': arguments.single,
+                    'base_dir': base_dir,
+                    'mask_file': mask_file,
+                    'events_file': events_file,
+                    'number_beams': number_beams,
+                    'number_proc': number_proc}
+    
+    watcher = Watcher(configuration)
     watcher.Watch()
 
 if __name__ == "__main__":
