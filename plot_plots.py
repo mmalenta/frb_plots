@@ -86,43 +86,48 @@ class Plotter:
         # Cases 1 and 3 can appear together with how the candidates are extracted at the moment
         # Case 4 definitely appears in case 3, but can also appear in case 2
         
+        # TODO: Need to create a single, larger array, which includes all the padding and insert the data into that
+        # That should be faster than appending the zeros array at the start and the end
+        zero_padding_samples_start = 0
+        zero_padding_samples_end = 0
+        input_file_samples = inputdata.shape[1]
+        total_data_samples = 0
+
         # We have case 1 - add extra 0 padding at the start
         if ((candmjd - self._filfile_pad_mjd) < filmjd):
             actualpad = (candmjd - filmjd)
-            zero_padding_samples = int(np.ceil((self._filfile_pad_mjd - actualpad) * 86400.0 / self._tsamp))
-            start_padding_added = zero_padding_samples
-            inputdata = np.append(np.zeros((self._nchans, zero_padding_samples)), inputdata, axis=1)
+            zero_padding_samples_start = int(np.ceil((self._filfile_pad_mjd - actualpad) * 86400.0 / self._tsamp))
+            start_padding_added = zero_padding_samples_start
             if (self._verbose):
-                print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples))
+                print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples_start))
 
         # We have case 3 - add extra 0 padding at the end
         if ((start_padding_added + cand_samples_from_start + full_delay_samples + filfile_padding_samples) > inputdata.shape[1]):
-            zero_padding_samples = (start_padding_added + cand_samples_from_start + full_delay_samples + filfile_padding_samples) - inputdata.shape[1]
-            inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
-
-            # Add extra full Cheetah padding
-            #zero_padding_samples = int(np.ceil(self._cand_pad_s / self._tsamp))
-            #inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)            
+            zero_padding_samples_end = (start_padding_added + cand_samples_from_start + full_delay_samples + filfile_padding_samples) - inputdata.shape[1]
             if (self._verbose):
-                print("Not enough data at the end. Padding with %d extra samples" % (zero_padding_samples))
+                print("Not enough data at the end. Padding with %d extra samples" % (zero_padding_samples_end))
 
         # How many samples to skip from start of the data block
         plot_skip_samples = cand_samples_from_start - plot_padding_samples + start_padding_added
 
-        # Padding on both sides
-        # Currently ignores the pulse width
-        output_samples_full = int(np.ceil(2 * plot_padding_samples))
-
-        # Padding on both sides + extra DM sweep
-        output_samples_sub = int(np.ceil(2 * plot_padding_samples)) + full_delay_samples - last_band_delay_samples
         # We have case 4 - add extra 0 padding at the end
         # We only have to worry about the extra delay when we do a subband dedispersion
         if (last_band_delay_samples > filfile_padding_samples):
-            zero_padding_samples = int(last_band_delay_samples - filfile_padding_samples)
-            inputdata = np.append(inputdata, np.zeros((self._nchans, zero_padding_samples)), axis=1)
+            zero_padding_samples_end = zero_padding_samples_end + int(last_band_delay_samples - filfile_padding_samples)
             if (self._verbose):
-                print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples))
+                print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples_end))
         
+        total_data_samples = zero_padding_samples_start + zero_padding_samples_end + input_file_samples
+
+        full_data = np.zeros((self._nchans, total_data_samples))
+        full_data[:, zero_padding_samples_start : zero_padding_samples_start + input_file_samples] = inputdata
+
+        # Full dedispersion: padding on both sides
+        # Currently ignores the pulse width
+        output_samples_full = int(np.ceil(2 * plot_padding_samples))
+        # Subband dedispersion: padding on both sides + extra DM sweep
+        output_samples_sub = int(np.ceil(2 * plot_padding_samples)) + full_delay_samples - last_band_delay_samples
+
         if (self._verbose):
             print("Candidate plotting:")
 
@@ -134,7 +139,6 @@ class Plotter:
             print("\tPadding at the start: %d" % (start_padding_added))
             print("\tSamples skipped at the start: %d" % (plot_skip_samples))
 
-
         dedispersed_sub = np.zeros((outbands, output_samples_sub))
         dedispersed_full = np.zeros((1, output_samples_full))
 
@@ -143,9 +147,9 @@ class Plotter:
             for chan in np.arange(perband):
                 chanfreq = bandtop + chan * self._fband
                 delay_sub = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
-                dedispersed_sub[band, :] = np.add(dedispersed_sub[band, :], inputdata[chan + band * perband, int(plot_skip_samples) + delay_sub : int(plot_skip_samples) + delay_sub + output_samples_sub])
+                dedispersed_sub[band, :] = np.add(dedispersed_sub[band, :], full_data[chan + band * perband, int(plot_skip_samples) + delay_sub : int(plot_skip_samples) + delay_sub + output_samples_sub])
                 delay_full = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp))
-                dedispersed_full[0, :] = np.add(dedispersed_full[0, :], inputdata[chan + band * perband, int(plot_skip_samples) + delay_full : int(plot_skip_samples) + delay_full + output_samples_full])
+                dedispersed_full[0, :] = np.add(dedispersed_full[0, :], full_data[chan + band * perband, int(plot_skip_samples) + delay_full : int(plot_skip_samples) + delay_full + output_samples_full])
 
         dm_end = time.time()
         
