@@ -97,7 +97,7 @@ class Plotter:
         # We have case 1 - add extra 0 padding at the start
         if ((candmjd - plot_padding_mjd) < filmjd):
             actualpad = (candmjd - filmjd)
-            zero_padding_samples_start = int(np.ceil((self._filfile_pad_mjd - actualpad) * 86400.0 / self._tsamp))
+            zero_padding_samples_start = int(np.ceil((plot_padding_mjd - actualpad) * 86400.0 / self._tsamp))
             start_padding_added = zero_padding_samples_start
             if (self._verbose):
                 print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples_start))
