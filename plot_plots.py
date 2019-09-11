@@ -169,7 +169,7 @@ class Plotter:
         self._ftop = ftop
         self._fband = fband # A negative value
         self._fbottom = self._ftop + self._nchans * self._fband
-        self._plot_pad_s = min(20.0 * np.round(properties['Width']) * 1e-03, 0.5)
+        self._plot_pad_s = min(np.ceil(20.0 * properties['Width']) * 1e-03, 0.5)
 
         # Update the dedispersion parameters
         self._disp_const = 4.15e+03 * (1.0 / (self._fbottom * self._fbottom) - 1.0 / (self._ftop * self._ftop)) # in s per unit DM
