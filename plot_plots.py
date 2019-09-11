@@ -51,7 +51,7 @@ class Plotter:
         # This should really be an option rather than a hardcoded value
         self._filfile_pad_s = 1.0
         self._filfile_pad_mjd = self._filfile_pad_s / 86400.0
-        self._plot_pad_s = self._filfile_pad_s / 2.0
+        self._plot_pad_s = 0 #self._filfile_pad_s / 2.0
         self._dedisp_bands = 0
 
     def Dedisperse(self, inputdata, filmjd, properties, outbands):
@@ -140,6 +140,7 @@ class Plotter:
             print("\tSamples skipped at the start: %d" % (plot_skip_samples))
 
         dedispersed_sub = np.zeros((outbands, output_samples_sub))
+        dedispersed_not_sum = np.zeros((outbands, output_samples_full))
         dedispersed_full = np.zeros((1, output_samples_full))
 
         for band in np.arange(outbands):
@@ -149,14 +150,16 @@ class Plotter:
                 delay_sub = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
                 dedispersed_sub[band, :] = np.add(dedispersed_sub[band, :], full_data[chan + band * perband, int(plot_skip_samples) + delay_sub : int(plot_skip_samples) + delay_sub + output_samples_sub])
                 delay_full = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp))
-                dedispersed_full[0, :] = np.add(dedispersed_full[0, :], full_data[chan + band * perband, int(plot_skip_samples) + delay_full : int(plot_skip_samples) + delay_full + output_samples_full])
+                dedisp_chunk = full_data[chan + band * perband, int(plot_skip_samples) + delay_full : int(plot_skip_samples) + delay_full + output_samples_full]
+                dedispersed_full[0, :] = np.add(dedispersed_full[0, :], dedisp_chunk)
+                dedispersed_not_sum[band, :] = np.add(dedispersed_not_sum[band, :], dedisp_chunk)
 
         dm_end = time.time()
         
         if (self._verbose):
             print("Dedispersion took %.2fs" % (dm_end - dm_start))
 
-        return dedispersed_sub, dedispersed_full, start_padding_added
+        return dedispersed_sub, dedispersed_not_sum, dedispersed_full, start_padding_added
 
     def PlotExtractedCand(self, beam_dir, filename, headsize, nchans, ftop, fband, tsamp, properties, filmjd, ibeam=0, nodebeam=0):
 
@@ -166,6 +169,7 @@ class Plotter:
         self._ftop = ftop
         self._fband = fband # A negative value
         self._fbottom = self._ftop + self._nchans * self._fband
+        self._plot_pad_s = min(20.0 * np.round(properties['Width']) * 1e-03, 0.5)
 
         # Update the dedispersion parameters
         self._disp_const = 4.15e+03 * (1.0 / (self._fbottom * self._fbottom) - 1.0 / (self._ftop * self._ftop)) # in s per unit DM
@@ -212,15 +216,13 @@ class Plotter:
         time_avg_data = fildata[:, :timesamples].reshape(fildata.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
 
         # Frequency average the data (i.e. subband dedisperse)
-        dedisp_sub, dedisp_full, skip_padding = self.Dedisperse(time_avg_data, filmjd, properties, self._dedisp_bands)
+        dedisp_sub, dedisp_not_sum, dedisp_full, skip_padding = self.Dedisperse(time_avg_data, filmjd, properties, self._dedisp_bands)
         dedisp_full = dedisp_full / dedisp_full.shape[1]
-       
 
         datamean = np.mean(dedisp_sub[:, skip_padding : (skip_padding + timesamples)])
         datastd = np.std(dedisp_sub[:, skip_padding : (skip_padding + timesamples)])        
-
         ctop = int(np.ceil(datamean + 1.25 * datastd))
-        cbottom = int(np.floor(datamean - 0.5 * datastd))
+        cbottom = int(np.floor(datamean - 0.50 * datastd))
 
         fmt = lambda x: "{:.2f}".format(x)
         
@@ -236,46 +238,98 @@ class Plotter:
         avg_time_label_str = [fmt(label) for label in avg_time_label]
         
         cmap = 'binary'
-        
-        fil_fig, fil_axis = plt.subplots(2, 1, figsize=(10.24, 7.68), frameon=False, dpi=100)
+
+        fil_fig = plt.figure(figsize=(10.24, 7.68), frameon=False, dpi=100)
         fil_fig.tight_layout(h_pad=3.25, rect=[0, 0.03, 1, 0.95])
-        
+
+        plot_area = gs.GridSpec(2, 1)
+        top_area = gs.GridSpecFromSubplotSpec(1, 5, subplot_spec=plot_area[0])
+        bottom_area = gs.GridSpecFromSubplotSpec(1, 2, subplot_spec=plot_area[1])
+
+        ax_spectrum = plt.Subplot(fil_fig, top_area[0, :-1])
+        fil_fig.add_subplot(ax_spectrum)
+
+        ax_band = plt.Subplot(fil_fig, top_area[0, -1])
+        fil_fig.add_subplot(ax_band)
+
+        ax_dedisp = plt.Subplot(fil_fig, bottom_area[0])
+        fil_fig.add_subplot(ax_dedisp)
+
+        ax_time = plt.Subplot(fil_fig, bottom_area[1])
+        fil_fig.add_subplot(ax_time)
+
         dedispchans = dedisp_sub.shape[0]
         delays = np.zeros(dedispchans)
 
         for ichan in np.arange(dedispchans):
             chanfreq = self._ftop + ichan * self._fband * self._freqavg
-            delays[ichan] = int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp)) + 0.95 * self._plot_pad_s / (self._tsamp)
+            delays[ichan] = int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp)) + 0.50 * self._plot_pad_s / (self._tsamp)
 
-        axboth = fil_axis[0]
-        axboth.imshow(dedisp_sub, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
-        axboth.plot(delays, np.arange(dedispchans), linewidth=0.5, color='deepskyblue')
-        axboth.set_title('Time (' + str(self._timeavg) + '), freq (' + str(self._freqavg) + ') avg', fontsize=11)
-        axboth.set_xlabel('Time [s]', fontsize=10)
-        axboth.set_ylabel('Frequency [MHz]', fontsize=10)
-        axboth.set_xticks(avg_time_pos)
-        axboth.set_xticklabels(avg_time_label_str, fontsize=8)
-        axboth.set_yticks(avg_freq_pos)
-        axboth.set_yticklabels(avg_freq_label_str, fontsize=8)        
+
+        datamean = np.mean(dedisp_sub[:, skip_padding : (skip_padding + timesamples)])
+        datastd = np.std(dedisp_sub[:, skip_padding : (skip_padding + timesamples)])        
+        ctop = int(np.ceil(datamean + 1.75 * datastd))
+        cbottom = int(np.floor(datamean - 0.50 * datastd))
+
+        fmtmjd = "{:.6f}".format(properties['MJD'])
+        fmtsnr = "{:.2f}".format(properties['SNR'])
+        fmtdm = "{:.2f}".format(properties['DM'])
+        fmtwidth = "{:.2f}".format(properties['Width'])
+
+        header = 'MJD: ' + fmtmjd + ', SNR: ' + fmtsnr + ', DM: ' + fmtdm + ', width: ' + fmtwidth + 'ms' + \
+                ', averaging: ' + str(self._timeavg) + 'T, ' + str(self._freqavg) + 'F\n' \
+                'Beam ' + str(properties['Beam']) + ': RA ' + properties['RA'] + ', Dec ' + properties['Dec'] + '      ' + properties['File']
+
+
+        ax_spectrum.imshow(dedisp_sub, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
+        ax_spectrum.plot(delays, np.arange(dedispchans), linewidth=0.5, alpha=0.5, color='deepskyblue')
+        ax_spectrum.set_title(header, fontsize=10, fontweight='bold')
+        ax_spectrum.set_xlabel('Time [s]', fontsize=9)
+        ax_spectrum.set_ylabel('Frequency [MHz]', fontsize=9)
+        ax_spectrum.set_xticks(avg_time_pos)
+        ax_spectrum.set_xticklabels(avg_time_label_str, fontsize=8)
+        ax_spectrum.set_yticks(avg_freq_pos)
+        ax_spectrum.set_yticklabels(avg_freq_label_str, fontsize=8)        
+
+        sub_spectrum = np.sum(dedisp_sub, axis=1)
+
+        ax_band.plot(sub_spectrum, np.arange(sub_spectrum.shape[0]), color='black', linewidth=0.75)
+        ax_band.invert_yaxis()
+        ax_band.yaxis.set_label_position("right")
+        ax_band.yaxis.tick_right()
+        ax_band.set_title('Bandpass', fontsize=9)
+        ax_band.set_yticks(avg_freq_pos)
+        ax_band.set_yticklabels(avg_freq_label_str, fontsize=8)
+        
 
         dedisp_time_pos = np.linspace(0, dedisp_full.shape[1], num=9)
         dedisp_time_label = dedisp_time_pos * self._tsamp + self._plot_pad_s + (properties['MJD'] - filmjd) * 86400.0
         dedisp_time_label = dedisp_time_pos * self._tsamp + skip_padding * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._plot_pad_s)        
         dedisp_time_label_str = [fmt(label) for label in dedisp_time_label]
         
-        axdedisp = fil_axis[1]
-        axdedisp.plot(dedisp_full[0, :], linewidth=0.4, color='black')
-        fmtdm = "{:.2f}".format(properties['DM'])
-        axdedisp.axvline(int(dedisp_full.shape[1] / 2), color='deepskyblue', linewidth=0.5)
-        axdedisp.set_ylim()
-        axdedisp.set_title('Dedispersed time series, DM ' + fmtdm)
-        axdedisp.set_xticks(dedisp_time_pos)
-        axdedisp.set_xticklabels(dedisp_time_label_str)
-        axdedisp.set_xlabel('Time [s]')
-        axdedisp.set_ylabel('Power [arbitrary units]')
+        datamean = np.mean(dedisp_not_sum[:, :])
+        datastd = np.std(dedisp_not_sum[:, :])        
+        ctop = int(np.ceil(datamean + 1.25 * datastd))
+        cbottom = int(np.floor(datamean - 0.50 * datastd))
+
+        ax_dedisp.imshow(dedisp_not_sum, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
+        ax_dedisp.set_xticks(dedisp_time_pos)
+        ax_dedisp.set_xticklabels(dedisp_time_label_str, fontsize=8)
+        ax_dedisp.set_xlabel('Time [s]', fontsize=9)
+        ax_dedisp.set_yticks(avg_freq_pos)
+        ax_dedisp.set_ylabel('Frequency [MHz]', fontsize=9)
+        ax_dedisp.set_yticklabels(avg_freq_label_str, fontsize=8)
+
+        ax_time.plot(dedisp_full[0, :], linewidth=0.4, color='black')
+        ax_time.axvline(int(dedisp_full.shape[1] / 2), color='deepskyblue', linewidth=0.5)
+        ax_time.set_ylim()
+        ax_time.set_xticks(dedisp_time_pos)
+        ax_time.set_xticklabels(dedisp_time_label_str)
+        ax_time.set_xlabel('Time [s]', fontsize=9)
+        ax_time.set_ylabel('Power [arbitrary units]')
         
         if (np.sum(dedisp_full) == 0):
-            axdedisp.text(0.5, 0.6, 'Not dedispersed properly - please report!', fontsize=14, weight='bold', color='firebrick',  horizontalalignment='center', verticalalignment='center', transform=axdedisp.transAxes)
+            ax_time.text(0.5, 0.6, 'Not dedispersed properly - please report!', fontsize=14, weight='bold', color='firebrick',  horizontalalignment='center', verticalalignment='center', transform=ax_time.transAxes)
         
         if (self._single_pass):
             plotdir = os.path.join(self._outdir, 'beam0' + str(nodebeam), 'Plots_single')
