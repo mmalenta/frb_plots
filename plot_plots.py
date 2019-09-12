@@ -325,13 +325,21 @@ class Plotter:
         ax_dedisp.set_ylabel('Frequency [MHz]', fontsize=9)
         ax_dedisp.set_yticklabels(avg_freq_label_str, fontsize=8)
 
+        dedisp_norm_pos = [0.0, 0.25, 0.5, 0.75, 1.0]
+        dedisp_norm_label_sr = [fmt(label) for label in dedisp_norm_pos]
+
+        norm_factor = np.max(dedisp_full[0, :])
+        dedisp_full = dedisp_full / norm_factor
+
         ax_time.plot(dedisp_full[0, :], linewidth=0.4, color='black')
         ax_time.axvline(int(dedisp_full.shape[1] / 2), color='deepskyblue', linewidth=0.5)
         ax_time.set_ylim()
         ax_time.set_xticks(dedisp_time_pos)
         ax_time.set_xticklabels(dedisp_time_label_str)
         ax_time.set_xlabel('Time [s]', fontsize=9)
-        ax_time.set_ylabel('Power [arbitrary units]')
+        ax_time.set_yticks(dedisp_norm_pos)
+        ax_time.set_yticklabels(dedisp_norm_label_sr)
+        ax_time.set_ylabel('Normalised power')
         
         if (np.sum(dedisp_full) == 0):
             ax_time.text(0.5, 0.6, 'Not dedispersed properly - please report!', fontsize=14, weight='bold', color='firebrick',  horizontalalignment='center', verticalalignment='center', transform=ax_time.transAxes)
@@ -368,7 +376,7 @@ class Watcher:
         self._nbeams = 6
         self._header_names = ['MJD', 'DM', 'Width', 'SNR']
         self._start_time = time.time()
-        self._mjd_pad = 1.0 / 86400.0
+        self._mjd_pad = config['window_size'] / 86400.0
         self._beam_info = pd.DataFrame()
         
         self._plot_length = 120.0 # how many seconds of data to plot
@@ -695,6 +703,7 @@ def main():
     parser.add_argument("-e", "--events", help="Pipeline events log file", type=str)
     parser.add_argument("-n", "--nbeams", help="Number of beams to watch", required=False, type=int, default=6)
     parser.add_argument("-p", "--nproc", help="Number of plotting processes to run", required=False, type=int, default=1)
+    parser.add_argument("-w", "--window", help="Extracted candidate padding window [seconds]", required=False, type=float, default=0.5)
 
     arguments = parser.parse_args()
 
@@ -704,6 +713,7 @@ def main():
     events_file = arguments.events
     number_beams = arguments.nbeams
     number_proc = arguments.nproc
+    window_size = arguments.window
 
     if (number_beams == 0):
         print("ERROR: I need one or more beams to watch")
@@ -745,7 +755,8 @@ def main():
                     'mask_file': mask_file,
                     'events_file': events_file,
                     'number_beams': number_beams,
-                    'number_proc': number_proc}
+                    'number_proc': number_proc,
+                    'window_size': window_size}
     
     watcher = Watcher(configuration)
     watcher.Watch()
