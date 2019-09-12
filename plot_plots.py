@@ -63,6 +63,7 @@ class Plotter:
         original_data_length = inputdata.shape[1]
         filfile_padding_samples = int(np.floor(self._filfile_pad_s / self._tsamp))
         plot_padding_samples = int(np.floor(self._plot_pad_s / self._tsamp))
+        plot_padding_mjd = self._plot_pad_s / 86400.0
         cand_samples_from_start = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp))
 
         output_samples_sub = 0
@@ -94,16 +95,16 @@ class Plotter:
         total_data_samples = 0
 
         # We have case 1 - add extra 0 padding at the start
-        if ((candmjd - self._filfile_pad_mjd) < filmjd):
+        if ((candmjd - plot_padding_mjd) < filmjd):
             actualpad = (candmjd - filmjd)
-            zero_padding_samples_start = int(np.ceil((self._filfile_pad_mjd - actualpad) * 86400.0 / self._tsamp))
+            zero_padding_samples_start = int(np.ceil((plot_padding_mjd - actualpad) * 86400.0 / self._tsamp))
             start_padding_added = zero_padding_samples_start
             if (self._verbose):
                 print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples_start))
 
         # We have case 3 - add extra 0 padding at the end
-        if ((start_padding_added + cand_samples_from_start + full_delay_samples + filfile_padding_samples) > inputdata.shape[1]):
-            zero_padding_samples_end = (start_padding_added + cand_samples_from_start + full_delay_samples + filfile_padding_samples) - inputdata.shape[1]
+        if ((start_padding_added + cand_samples_from_start + full_delay_samples + plot_padding_samples) > inputdata.shape[1]):
+            zero_padding_samples_end = (start_padding_added + cand_samples_from_start + full_delay_samples + plot_padding_samples) - inputdata.shape[1]
             if (self._verbose):
                 print("Not enough data at the end. Padding with %d extra samples" % (zero_padding_samples_end))
 
@@ -112,8 +113,8 @@ class Plotter:
 
         # We have case 4 - add extra 0 padding at the end
         # We only have to worry about the extra delay when we do a subband dedispersion
-        if (last_band_delay_samples > filfile_padding_samples):
-            zero_padding_samples_end = zero_padding_samples_end + int(last_band_delay_samples - filfile_padding_samples)
+        if (last_band_delay_samples > plot_padding_samples):
+            zero_padding_samples_end = zero_padding_samples_end + int(last_band_delay_samples - plot_padding_samples)
             if (self._verbose):
                 print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples_end))
         
@@ -218,6 +219,10 @@ class Plotter:
         # Frequency average the data (i.e. subband dedisperse)
         dedisp_sub, dedisp_not_sum, dedisp_full, skip_padding = self.Dedisperse(time_avg_data, filmjd, properties, self._dedisp_bands)
         dedisp_full = dedisp_full / dedisp_full.shape[1]
+
+        print(dedisp_sub.shape)
+        print(skip_padding)
+        print(timesamples)
 
         datamean = np.mean(dedisp_sub[:, skip_padding : (skip_padding + timesamples)])
         datastd = np.std(dedisp_sub[:, skip_padding : (skip_padding + timesamples)])        
