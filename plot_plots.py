@@ -2,6 +2,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 import argparse
+import cupy as cp
 import glob
 import json
 import matplotlib.gridspec as gs
@@ -162,6 +163,9 @@ class Plotter:
 
         return dedispersed_sub, dedispersed_not_sum, dedispersed_full, start_padding_added
 
+    def PadData():
+        x = 2
+
     def PlotExtractedCand(self, beam_dir, filename, headsize, nchans, ftop, fband, tsamp, properties, filmjd, ibeam=0, nodebeam=0):
 
         # Update the filterbank file parameters
@@ -183,6 +187,13 @@ class Plotter:
             print("\tTop frequency: %.8f" % (self._ftop))
             print("\tChannel bandwidth: %.8f" % (self._fband))
             print("\tBottom frequency: %.8f" % (self._fbottom))
+
+        cpu_sub_delays = np.zeros((nchans, ), dtype=np.float32)
+        for iband in np.arange(self._dedisp_bands):
+            bandtop = self._ftop + iband * self._freqavg * self._fband
+            for ichan in np.arange(self._freqavg):
+                chanfreq = bandtop + ichan * self._fband
+                cpu_sub_delays[int(iband * self._freqavg)] =  int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
 
         # There must be a better way of doing it once only
         if (not self._mask_file == None):
@@ -212,9 +223,68 @@ class Plotter:
         filband = np.mean(fildata[:, 128:], axis=1)
         fildata = fildata - filband[:, np.newaxis]
 
+        threadx = 32
+        thready = 32
+
         # Time average the original data
-        timesamples = int(np.floor(fildata.shape[1] / self._timeavg) * self._timeavg) 
+        timesamples = int(np.floor(fildata.shape[1] / (self._timeavg * threadx)) * self._timeavg * threadx) 
         time_avg_data = fildata[:, :timesamples].reshape(fildata.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
+
+
+        blockx = int(timesamples / threadx)
+        blocky = int(self._nchans / thready)
+
+        SubDedispGPU = cp.RawKernel(r'''
+        
+            extern "C" __global__ void SubDedispGPU(float* __restrict__ indata, float* __restrict__ outsub, float * __restrict__ delays, int time_samples) {
+                
+                __shared__ float inchunk[32][32];
+                __shared__ float subband[32];
+
+                int time = blockIdx.x + blockDim.x + threadIdx.x;
+                int channel = blockIdx.y * blockDim.y + threadIdx.y;
+                int lane = threadIdx.x % 32;
+                int delay = delays[channel];
+
+                inchunk[threadIdx.x][threadIdx.y] = indata[time_samples * channel + time + delay];
+                float val = inchunk[threadIdx.y][threadIdx.x];
+
+                for (int offset = 16; offset > 0; offset /= 2) {
+                    val += __shfl_down_sync(0xFFFFFFFF, val, offset);
+                }
+
+
+
+                if (lane == 0) {
+                    subband[threadIdx.y] = val;
+                }
+
+                __syncthreads();
+
+                if (threadIdx.y == 0) {
+                    
+                }
+
+                outfill[time] = 0.0f;
+                outtime[time] = 0.0f;
+
+            }
+
+        ''', 'sub_dedisp_kernel')
+
+        FullDedispGPU = cp.RawKernel(r'''
+        
+        ''', 'full_dedisp_kernel')
+
+        self.PadData()
+
+        gpu_input = cp.ones(5)
+        gpu_sub = cp.zeros(5)
+        gpu_sub_delays = cp.asarray(cpu_sub_delays)
+
+
+        SubDedispGPU((blockx, blocky), (threadx, thready), gpu_input, gpu_sub, gpu_sub_delays)
+        FullDedispGPU()
 
         # Frequency average the data (i.e. subband dedisperse)
         dedisp_sub, dedisp_not_sum, dedisp_full, skip_padding = self.Dedisperse(time_avg_data, filmjd, properties, self._dedisp_bands)
