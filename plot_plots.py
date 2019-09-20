@@ -163,8 +163,97 @@ class Plotter:
 
         return dedispersed_sub, dedispersed_not_sum, dedispersed_full, start_padding_added
 
-    def PadData():
-        x = 2
+    def PadData(self, inputdata, filmjd, properties, outbands):
+
+        pad_start = time.time()
+        dm = properties['DM']
+        candmjd = properties['MJD']
+        perband = int(self._nchans / outbands)
+        original_data_length = inputdata.shape[1]
+        plot_padding_samples = int(np.floor(self._plot_pad_s / self._tsamp))
+        plot_padding_mjd = self._plot_pad_s / 86400.0
+        cand_samples_from_start = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp))
+
+        output_samples_sub = 0
+        output_samples_full = 0
+        plot_skip_samples = 0
+        start_padding_added = 0
+
+        last_band_top = self._ftop + (outbands - 1) * perband * self._fband
+        last_band_bottom = last_band_top + perband * self._fband
+        full_delay_samples = int(np.ceil(self._disp_const * dm / self._tsamp))
+        last_band_delay_samples = int(np.ceil(4.15e+03 * dm * (1.0 / (last_band_bottom * last_band_bottom) - 1.0 / (last_band_top * last_band_top)) / self._tsamp))
+
+        # There are 4(5) cases in general (if everything is extracted correctly):
+        ## 1. Not enough padding at the start of the file (candidate was early enough in the file that there is no full padding)
+        ## 2. Enough padding on both sides
+        ## 3. Not enough samples at the end of the file (these can really be combined into one check)
+        ### a. Just part of the padding missing
+        ### b. Whole padding and part of the actual candidate data missing
+        ## 4. Not enough padding to cover the sweep in the last band
+        # If we have case 2 - we are good
+        # Cases 1 and 3 can appear together with how the candidates are extracted at the moment
+        # Case 4 definitely appears in case 3, but can also appear in case 2
+        
+        # TODO: Need to create a single, larger array, which includes all the padding and insert the data into that
+        # That should be faster than appending the zeros array at the start and the end
+        zero_padding_samples_start = 0
+        zero_padding_samples_end = 0
+        input_file_samples = inputdata.shape[1]
+        total_data_samples = 0
+
+        # We have case 1 - add extra 0 padding at the start
+        if ((candmjd - plot_padding_mjd) < filmjd):
+            actualpad = (candmjd - filmjd)
+            zero_padding_samples_start = int(np.ceil((plot_padding_mjd - actualpad) * 86400.0 / self._tsamp))
+            start_padding_added = zero_padding_samples_start
+            if (self._verbose):
+                print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples_start))
+
+        # We have case 3 - add extra 0 padding at the end
+        if ((start_padding_added + cand_samples_from_start + full_delay_samples + plot_padding_samples) > inputdata.shape[1]):
+            zero_padding_samples_end = (start_padding_added + cand_samples_from_start + full_delay_samples + plot_padding_samples) - inputdata.shape[1]
+            if (self._verbose):
+                print("Not enough data at the end. Padding with %d extra samples" % (zero_padding_samples_end))
+
+        # How many samples to skip from start of the data block
+        plot_skip_samples = cand_samples_from_start - plot_padding_samples + start_padding_added
+
+        # We have case 4 - add extra 0 padding at the end
+        # We only have to worry about the extra delay when we do a subband dedispersion
+        if (last_band_delay_samples > plot_padding_samples):
+            zero_padding_samples_end = zero_padding_samples_end + int(last_band_delay_samples - plot_padding_samples)
+            if (self._verbose):
+                print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples_end))
+        
+        total_data_samples = zero_padding_samples_start + zero_padding_samples_end + input_file_samples
+
+        full_data = np.zeros((self._nchans, total_data_samples))
+        full_data[:, zero_padding_samples_start : zero_padding_samples_start + input_file_samples] = inputdata
+
+        # Full dedispersion: padding on both sides
+        # Currently ignores the pulse width
+        output_samples_full = int(np.ceil(2 * plot_padding_samples))
+        # Subband dedispersion: padding on both sides + extra DM sweep
+        output_samples_sub = int(np.ceil(2 * plot_padding_samples)) + full_delay_samples - last_band_delay_samples
+
+        if (self._verbose):
+            print("Candidate plotting:")
+
+            print("\tInput data length (original): %d" % (original_data_length))
+            print("\tInput data length (with all padding included): %d" % (inputdata.shape[1]))
+            print("\tNumber of dedispersed subbands: %d" % (outbands))
+            print("\tOutput plot samples: %d (subband), %d (full)" % (output_samples_sub, output_samples_full))
+            print("\tDM sweep samples: %d" % (full_delay_samples))
+            print("\tPadding at the start: %d" % (start_padding_added))
+            print("\tSamples skipped at the start: %d" % (plot_skip_samples))
+
+        pad_end = time.time()
+        
+        if (self._verbose):
+            print("Padding took %.2fs" % (pad_end - pad_start))
+
+        return output_samples_full, output_samples_sub, full_data, start_padding_added
 
     def PlotExtractedCand(self, beam_dir, filename, headsize, nchans, ftop, fband, tsamp, properties, filmjd, ibeam=0, nodebeam=0):
 
@@ -189,11 +278,21 @@ class Plotter:
             print("\tBottom frequency: %.8f" % (self._fbottom))
 
         cpu_sub_delays = np.zeros((nchans, ), dtype=np.float32)
+        cpu_band_delays = np.zeros((self._dedisp_bands,), dtype=np.float32)
+        
+        # Centre frequency of the top channel after subband dedispersion
+        top_band = self._ftop + (self._dedisp_bands / 2.0) * self._fband
+        
         for iband in np.arange(self._dedisp_bands):
-            bandtop = self._ftop + iband * self._freqavg * self._fband
+            # Need to move to the middle of the channel
+            bandtop = self._ftop + iband * self._freqavg * self._fband + 0.5 * self._fband
             for ichan in np.arange(self._freqavg):
                 chanfreq = bandtop + ichan * self._fband
                 cpu_sub_delays[int(iband * self._freqavg)] =  int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
+
+            centre_band = self._ftop + iband * self._freqavg + (self._dedisp_bands / 2.0) * self._fband
+            cpu_band_delays[int(iband)] =  int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (centre_band * centre_band) - 1.0 / (top_band * top_band)) / self._tsamp))
+
 
         # There must be a better way of doing it once only
         if (not self._mask_file == None):
@@ -216,19 +315,19 @@ class Plotter:
         
         self._tsamp = self._tsamp * self._timeavg
         # Read original data
-        fildata = np.reshape(np.fromfile(os.path.join(beam_dir, filename), dtype='B')[headsize:], (-1, nchans)).T
+        fil_data = np.reshape(np.fromfile(os.path.join(beam_dir, filename), dtype='B')[headsize:], (-1, nchans)).T
         if (self._verbose):
-            print("Read %d time samples" % (fildata.shape[1]))
-        fildata = fildata * mask[:, np.newaxis]
-        filband = np.mean(fildata[:, 128:], axis=1)
-        fildata = fildata - filband[:, np.newaxis]
+            print("Read %d time samples" % (fil_data.shape[1]))
+        fil_data = fil_data * mask[:, np.newaxis]
+        filband = np.mean(fil_data[:, 128:], axis=1)
+        fil_data = fil_data - filband[:, np.newaxis]
 
-        threadx = 32
-        thready = 32
+        thready = self._freqavg
+        threadx = int(1024 / thready)
 
         # Time average the original data
-        timesamples = int(np.floor(fildata.shape[1] / (self._timeavg * threadx)) * self._timeavg * threadx) 
-        time_avg_data = fildata[:, :timesamples].reshape(fildata.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
+        timesamples = int(np.floor(fil_data.shape[1] / (self._timeavg * threadx)) * self._timeavg * threadx) 
+        time_avg_data = fil_data[:, :timesamples].reshape(fil_data.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
 
 
         blockx = int(timesamples / threadx)
@@ -236,37 +335,44 @@ class Plotter:
 
         SubDedispGPU = cp.RawKernel(r'''
         
-            extern "C" __global__ void SubDedispGPU(float* __restrict__ indata, float* __restrict__ outsub, float * __restrict__ delays, int time_samples) {
+            extern "C" __global__ void SubDedispGPU(float* __restrict__ indata, float* __restrict__ outsub, float* __restrict__ outfull, float* __restrict__ outtime,
+                                                    float* __restrict__ full_delays, float* __restrict__ band_delays,
+                                                    int full_time_samples, int window_time_samples, int bands) {
                 
-                __shared__ float inchunk[32][32];
+                # This assumes we have 64 channels per band and use all 1024 threads
+                __shared__ float inchunk[16][64];
                 __shared__ float subband[32];
 
                 int time = blockIdx.x + blockDim.x + threadIdx.x;
-                int channel = blockIdx.y * blockDim.y + threadIdx.y;
+                int channel = threadIdx.y;
                 int lane = threadIdx.x % 32;
-                int delay = delays[channel];
+                int sub_delay = full_delays[channel];
+                int band_delay = 0;
 
-                inchunk[threadIdx.x][threadIdx.y] = indata[time_samples * channel + time + delay];
-                float val = inchunk[threadIdx.y][threadIdx.x];
+                for (int iband = 0; iband < bands; ++iband) {
 
-                for (int offset = 16; offset > 0; offset /= 2) {
-                    val += __shfl_down_sync(0xFFFFFFFF, val, offset);
+                    band_delay = band_delays[iband];
+                    inchunk[threadIdx.x][threadIdx.y] = indata[time_samples * channel + time + sub_delay];
+                    float val = inchunk[threadIdx.y][threadIdx.x];
+
+                    for (int offset = 16; offset > 0; offset /= 2) {
+                        val += __shfl_down_sync(0xFFFFFFFF, val, offset);
+                    }
+
+                    __syncthreads();
+
+                    if (time < full_time_samples) {
+
+                    }
+
+                    if (time < window_time_samples) {
+                        
+                        outfull[window_time_samples * iband + time] = val;
+                        outtime[time] = outtime[time] + val;
+                    }
+
+                    channel += blockDim.x;
                 }
-
-
-
-                if (lane == 0) {
-                    subband[threadIdx.y] = val;
-                }
-
-                __syncthreads();
-
-                if (threadIdx.y == 0) {
-                    
-                }
-
-                outfill[time] = 0.0f;
-                outtime[time] = 0.0f;
 
             }
 
@@ -274,17 +380,26 @@ class Plotter:
 
         FullDedispGPU = cp.RawKernel(r'''
         
+            cxtern "C" __global__ void FullDedispGPU(float* __restrict__ indata, float* __restict__ outfull, float* __restrict__ outtime,
+                                                        float* __restrict__ band_delays, int window_time_samples, int bands) {
+
+                __shared__;
+
+
+            }
+
         ''', 'full_dedisp_kernel')
 
-        self.PadData()
+        padded_data, sub_time_samples, window_time_samples, skip_padding = self.PadData(time_avg_data, filmjd, properties, self._dedisp_bands)
 
-        gpu_input = cp.ones(5)
+        gpu_input = cp.asarray(padded_data)
         gpu_sub = cp.zeros(5)
+        gpu_full = cp.zeros(5)
+        gpu_time = cp.zeros(5)
         gpu_sub_delays = cp.asarray(cpu_sub_delays)
+        gpu_band_delays = cp.asarray(cpu_band_delays)
 
-
-        SubDedispGPU((blockx, blocky), (threadx, thready), gpu_input, gpu_sub, gpu_sub_delays)
-        FullDedispGPU()
+        SubDedispGPU((blockx, blocky), (threadx, thready), gpu_input, gpu_sub, gpu_full, gpu_time, gpu_sub_delays, gpu_band_delays, sub_time_samples, window_time_samples, self._dedisp_bands)
 
         # Frequency average the data (i.e. subband dedisperse)
         dedisp_sub, dedisp_not_sum, dedisp_full, skip_padding = self.Dedisperse(time_avg_data, filmjd, properties, self._dedisp_bands)
