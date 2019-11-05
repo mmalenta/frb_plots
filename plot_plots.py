@@ -19,6 +19,7 @@ import time
 # Some global variables
 thread_x = 32 # Time dimension
 thread_y = 32 # Frequency dimension
+mjd_scale = 1.0 / 86400.0
 
 # This class does the actual plotting
 class Plotter:
@@ -33,6 +34,7 @@ class Plotter:
         # Filterbank file parameters
         self._nchans = 0
         self._tsamp = 0.0
+        self._tsamp_scaling = 1.0
         self._ftop = 0.0
         self._fband = 0.0
         self._fbottom = 0.0
@@ -44,20 +46,21 @@ class Plotter:
         #self._time_width = 8 # How many time samples we want to have across the averaged profile
         # Check whether we wanted 8 or 4 - I am a bit confused now
         self._time_width = 4 # How many time samples we want to have across the averaged profile
+        self._avg_fband = 0.0
 
         # .spccl plots parameters
         # Plot last 120 seconds of data
         self._spccl_refresh_s = 30.0
         self._spccl_length_s = 120.0
-        self._spccl_length_mjd = self._spccl_length_s / 86400.0
-        self._spccl_pad = 2.5 / 86400.0
+        self._spccl_length_mjd = self._spccl_length_s * mjd_scale
+        self._spccl_pad = 2.5 * mjd_scale
         self._beam_colours = ['firebrick', 'deepskyblue', 'darkorange', 'limegreen', 'purple', 'darkgrey']
 
         # Dedispersion parameters
         self._disp_const = 0.0
         # This should really be an option rather than a hardcoded value
         self._filfile_pad_s = 1.0
-        self._filfile_pad_mjd = self._filfile_pad_s / 86400.0
+        self._filfile_pad_mjd = self._filfile_pad_s * mjd_scale
         self._plot_pad_s = 0 #self._filfile_pad_s / 2.0
         self._dedisp_bands = 0
 
@@ -165,22 +168,22 @@ class Plotter:
         # This ensures we can have an integer number of threadblocks in the time dimension
         dm = properties['DM']
         cand_mjd = properties['MJD']
-        per_band = int(self._nchans / outbands)
+        per_band = self._freqavg
         original_data_length = inputdata.shape[1]
-        plot_padding_samples = int(np.ceil(self._plot_pad_s / self._tsamp / thread_x) * thread_x)
-        plot_padding_mjd = self._plot_pad_s / 86400.0
-        cand_samples_from_start = int(np.ceil((cand_mjd - fil_mjd) * 86400.0 / self._tsamp))
+        plot_padding_samples = int(np.ceil(self._plot_pad_s * self._tsamp_scaling / thread_x) * thread_x)
+        plot_padding_mjd = self._plot_pad_s * mjd_scale
+        cand_samples_from_start = int(np.ceil((cand_mjd - fil_mjd) * 86400.0 * self._tsamp_scaling))
 
         # Dispersive delay in seconds across the entire band
         full_band_delay_seconds = self._disp_const * dm
         # Dispersive delay in samples - make sure tsamp is expressed in seconds so that units agree
-        full_band_delay_samples = int(np.ceil(full_band_delay_seconds / self._tsamp / thread_x) * thread_x)
+        full_band_delay_samples = int(np.ceil(full_band_delay_seconds * self._tsamp_scaling / thread_x) * thread_x)
 
 
         # That should currently be equal to thread_y
-        last_band_top = self._ftop + (outbands - 1) * per_band * self._fband
-        last_band_bottom = last_band_top + per_band * self._fband
-        last_band_delay_samples = int(np.ceil(4.15e+03 * dm * (1.0 / (last_band_bottom * last_band_bottom) - 1.0 / (last_band_top * last_band_top)) / self._tsamp))
+        last_band_top = self._ftop + (outbands - 1) * self._avg_fband
+        last_band_bottom = last_band_top + self._avg_fband
+        last_band_delay_samples = int(np.ceil(4.15e+03 * dm * (1.0 / (last_band_bottom * last_band_bottom) - 1.0 / (last_band_top * last_band_top)) * self._tsamp_scaling))
         last_band_delay_samples = int(np.ceil(last_band_delay_samples / thread_x) * thread_x)
 
         zero_padding_samples_start = 0
@@ -191,7 +194,7 @@ class Plotter:
         # We don't have enough samples to cover padding at the start
         if ((cand_mjd - plot_padding_mjd) < fil_mjd):
             # Difference in samples (plot padding is now a multiple of the threadblock time dimension, so extra data padding takes this into account)
-            zero_padding_samples_start = plot_padding_samples - int(np.floor((cand_mjd - fil_mjd) * 86400.0 / self._tsamp))
+            zero_padding_samples_start = plot_padding_samples - int(np.floor((cand_mjd - fil_mjd) * 86400.0 * self._tsamp_scaling))
             start_padding_added = zero_padding_samples_start
             if (self._verbose):
                 print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples_start))
@@ -240,6 +243,7 @@ class Plotter:
         # Update the dedispersion parameters
         self._disp_const = 4.15e+03 * (1.0 / (self._fbottom * self._fbottom) - 1.0 / (self._ftop * self._ftop)) # in s per unit DM
         self._dedisp_bands = int(self._nchans / self._freqavg)
+        self._avg_fband = self._fband * self._freqavg
 
         if (self._verbose):
             print("Filerbank file parameters:")
@@ -275,6 +279,8 @@ class Plotter:
             self._timeavg = int(np.floor(pulse_samples / self._time_width))
         
         self._tsamp = self._tsamp * self._timeavg
+        self._tsamp_scaling = 1.0 / self._tsamp
+
         # Read original data
         fil_data = np.reshape(np.fromfile(os.path.join(beam_dir, filename), dtype='B')[headsize:], (-1, nchans)).T
         if (self._verbose):
@@ -290,15 +296,21 @@ class Plotter:
         timesamples = int(np.floor(fil_data.shape[1] / (self._timeavg * threadx)) * self._timeavg * threadx) 
         time_avg_data = fil_data[:, :timesamples].reshape(fil_data.shape[0], (int)(timesamples / self._timeavg), self._timeavg).sum(axis=2) / self._timeavg / self._freqavg
 
+        delays = np.zeros(self._dedisp_bands, dtype=np.int32)
+        ftop_part = 1.0 / (self._ftop * self._ftop)
+        scaling = 4.15e+03 * properties['DM'] * self._tsamp_scaling
+        offset = 0.75 * self._plot_pad_s * self._tsamp_scaling
         for iband in np.arange(self._dedisp_bands):
             # Need to move to the middle of the channel
-            bandtop = self._ftop + iband * self._freqavg * self._fband + 0.5 * self._fband
+            bandtop = self._ftop + iband * self._avg_fband + 0.5 * self._fband
             for ichan in np.arange(self._freqavg):
+                full_chan = iband * self._freqavg + ichan
                 chanfreq = bandtop + ichan * self._fband
-                cpu_intra_band_delays[int(iband * self._freqavg) + ichan] =  int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
+                cpu_intra_band_delays[full_chan] =  int(np.ceil(scaling * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop))))
+                delays[iband] = int(np.ceil(scaling *  (1.0 / (chanfreq * chanfreq) - ftop_part)) + offset)
 
-            centre_band = self._ftop + iband * self._freqavg * self._fband + (self._dedisp_bands / 2.0) * self._fband
-            cpu_inter_band_delays[int(iband)] =  int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (centre_band * centre_band) - 1.0 / (top_band * top_band)) / self._tsamp))
+            centre_band = self._ftop + iband * self._avg_fband + (self._dedisp_bands / 2.0) * self._fband
+            cpu_inter_band_delays[int(iband)] =  int(np.ceil(scaling * (1.0 / (centre_band * centre_band) - ftop_part)))
 
         '''for delay in cpu_sub_delays:
             print(delay)
@@ -311,7 +323,7 @@ class Plotter:
         
             extern "C" __global__ void sub_dedisp_kernel(float* __restrict__ indata, float* __restrict__ outdata,
                                                     int* __restrict__ intra_band_delays,
-                                                    int input_samples, int sub_dedisp_samples, int full_dedisp_samples, int bands) {
+                                                    int input_samples, int sub_dedisp_samples, int bands) {
                 
                 // This assumes we have 32 channels per band and use all 1024 threads
                 // Currently not overly flexible - we can't really have move to ensure we have at least a full warp of threads in time time dimension
@@ -359,17 +371,23 @@ class Plotter:
                                                             int sub_dedisp_samples, int full_dedisp_samples, int bands) {
 
                 int skip_sub_dedisp = sub_dedisp_samples * bands;
+                int skip_sub_and_full_dedisp = skip_sub_dedisp + full_dedisp_samples * bands;
 
                 int band = threadIdx.y;
                 int time = blockIdx.x * blockDim.x + threadIdx.x;
 
                 int inter_delay = inter_band_delays[band];
 
-                outdata[skip_sub_dedisp + full_dedisp_samples * band + time] = outdata[sub_dedisp_samples * band + time + inter_delay];
+                float val = outdata[sub_dedisp_samples * band + time + inter_delay];
+
+                outdata[skip_sub_dedisp + full_dedisp_samples * band + time] = val;
+
+                atomicAdd(&outdata[skip_sub_and_full_dedisp + time], val);
 
             }
 
         ''', 'full_dedisp_kernel')
+
 
         use_data, input_samples, full_dedisp_samples, sub_dedisp_samples, skip_samples = self.PadData(time_avg_data, filmjd, properties, self._dedisp_bands)
         block_x = int(sub_dedisp_samples / thread_x)
@@ -377,44 +395,50 @@ class Plotter:
 
         dedisp_start = time.time()
         gpu_input = cp.asarray(use_data)
-        gpu_output = cp.zeros(sub_dedisp_samples * self._dedisp_bands + full_dedisp_samples * self._dedisp_bands + full_dedisp_samples, dtype=use_data.dtype)
+        gpu_output = cp.zeros(sub_dedisp_samples * self._dedisp_bands + full_dedisp_samples * self._dedisp_bands + full_dedisp_samples + full_dedisp_samples, dtype=use_data.dtype)
         gpu_intra_band_delays = cp.asarray(cpu_intra_band_delays)
         gpu_inter_band_delays = cp.asarray(cpu_inter_band_delays)
 
         kernel_start = time.time()
         sub_kernel_start = time.time()
-        SubDedispGPU((block_x, block_y), (thread_x, thread_y), (gpu_input, gpu_output, gpu_intra_band_delays, input_samples, sub_dedisp_samples, full_dedisp_samples, self._dedisp_bands))
+        SubDedispGPU((block_x, block_y), (thread_x, thread_y), (gpu_input, gpu_output, gpu_intra_band_delays, input_samples, sub_dedisp_samples, self._dedisp_bands))
+        
+        cp.cuda.Device(0).synchronize()
         sub_kernel_end = time.time()
         sub_kernel_elapsed = sub_kernel_end - sub_kernel_start
-        print("Sub kernel took %.6fs" % (sub_kernel_elapsed))
 
         block_x = int(full_dedisp_samples / thread_x)
         block_y = 1
 
+        full_start = time.time()
         FullDedispGPU((block_x, block_y), (thread_x, thread_y), (gpu_output, gpu_inter_band_delays, sub_dedisp_samples, full_dedisp_samples, self._dedisp_bands))
+        cp.cuda.Device(0).synchronize
+        full_end = time.time()
+        full_elapsed = full_end - full_start
 
         kernel_end = time.time()
         kernel_elapsed = kernel_end - kernel_start
 
-        dedisp_sub = cp.asnumpy(gpu_output[:sub_dedisp_samples * self._dedisp_bands])
-        dedisp_sub = np.reshape(dedisp_sub, (self._dedisp_bands, -1))
+        cpu_output = cp.asnumpy(gpu_output)
 
-        dedisp_not_sum = cp.asnumpy(gpu_output[sub_dedisp_samples * self._dedisp_bands : sub_dedisp_samples * self._dedisp_bands + full_dedisp_samples * self._dedisp_bands])
-        dedisp_not_sum = np.reshape(dedisp_not_sum, (self._dedisp_bands, -1))
-
-        dedisp_end = time.time()
-        dedisp_elapsed = dedisp_end - dedisp_start
-
-        dedisp_full = dedisp_not_sum.sum(axis=0)
+        dedisp_sub = np.reshape(cpu_output[:sub_dedisp_samples * self._dedisp_bands], (self._dedisp_bands, -1))
+        dedisp_not_sum = np.reshape(cpu_output[sub_dedisp_samples * self._dedisp_bands : sub_dedisp_samples * self._dedisp_bands + full_dedisp_samples * self._dedisp_bands], (self._dedisp_bands, -1))
+        dedisp_full = cpu_output[sub_dedisp_samples * self._dedisp_bands + full_dedisp_samples * self._dedisp_bands : sub_dedisp_samples * self._dedisp_bands + full_dedisp_samples * self._dedisp_bands + full_dedisp_samples]
 
         gpu_output = None
         gpu_input = None
         gpu_intra_band_delays = None
         gpu_inter_band_delays = None
         
+        dedisp_end = time.time()
+        dedisp_elapsed = dedisp_end - dedisp_start
+
         print("Dedispersion took %.4fs" % (dedisp_elapsed))
         print("Kernels took %.4fs" % (kernel_elapsed))
         print("Sub kernel took %.4fs" % (sub_kernel_elapsed))
+        print("Full kernel took %.4fs" % (full_elapsed))
+
+        prep_start = time.time()
 
         datamean = np.mean(dedisp_sub[:, skip_samples : (skip_samples + sub_dedisp_samples)])
         datastd = np.std(dedisp_sub[:, skip_samples : (skip_samples + sub_dedisp_samples)])        
@@ -422,11 +446,11 @@ class Plotter:
         cbottom = int(np.floor(datamean - 0.50 * datastd))
 
         fmt = lambda x: "{:.2f}".format(x)
-        
+
         # Prepare the frequency ticks
-        avg_freq_pos = np.linspace(0, int(self._nchans / self._freqavg), num=9)
+        avg_freq_pos = np.linspace(0, self._dedisp_bands, num=5)
         avg_freq_pos[-1] = avg_freq_pos[-1] - 1       
-        avg_freq_label = self._ftop + avg_freq_pos * self._fband * self._freqavg
+        avg_freq_label = self._ftop + avg_freq_pos * self._avg_fband
         avg_freq_label_str = [fmt(label) for label in avg_freq_label]
         
         # Prepare the time ticks
@@ -436,18 +460,18 @@ class Plotter:
         
         cmap = 'binary'
 
-        fil_fig = plt.figure(figsize=(10.24, 7.68), frameon=False, dpi=100)
+        fil_fig = plt.figure(figsize=(10, 7), frameon=False, dpi=100)
         fil_fig.tight_layout(h_pad=3.25, rect=[0, 0.03, 1, 0.95])
 
         plot_area = gs.GridSpec(2, 1)
-        top_area = gs.GridSpecFromSubplotSpec(1, 5, subplot_spec=plot_area[0])
+        top_area = gs.GridSpecFromSubplotSpec(1, 1, subplot_spec=plot_area[0])
         bottom_area = gs.GridSpecFromSubplotSpec(1, 2, subplot_spec=plot_area[1])
 
-        ax_spectrum = plt.Subplot(fil_fig, top_area[0, :-1])
+        ax_spectrum = plt.Subplot(fil_fig, top_area[0])
         fil_fig.add_subplot(ax_spectrum)
 
-        ax_band = plt.Subplot(fil_fig, top_area[0, -1])
-        fil_fig.add_subplot(ax_band)
+        #ax_band = plt.Subplot(fil_fig, top_area[0, -1])
+        #fil_fig.add_subplot(ax_band)
 
         ax_dedisp = plt.Subplot(fil_fig, bottom_area[0])
         fil_fig.add_subplot(ax_dedisp)
@@ -455,45 +479,37 @@ class Plotter:
         ax_time = plt.Subplot(fil_fig, bottom_area[1])
         fil_fig.add_subplot(ax_time)
 
-        dedispchans = dedisp_sub.shape[0]
-        delays = np.zeros(dedispchans)
-
-        for ichan in np.arange(dedispchans):
-            chanfreq = self._ftop + ichan * self._fband * self._freqavg
-            delays[ichan] = int(np.ceil(4.15e+03 * properties['DM'] * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp)) + 0.50 * self._plot_pad_s / (self._tsamp)
-
         fmtmjd = "{:.6f}".format(properties['MJD'])
         fmtsnr = "{:.2f}".format(properties['SNR'])
         fmtdm = "{:.2f}".format(properties['DM'])
         fmtwidth = "{:.2f}".format(properties['Width'])
 
         header = 'MJD: ' + fmtmjd + ', SNR: ' + fmtsnr + ', DM: ' + fmtdm + ', width: ' + fmtwidth + 'ms' + \
-                ', averaging: ' + str(self._timeavg) + 'T, ' + str(self._freqavg) + 'F\n' \
+                ', avg: ' + str(self._timeavg) + 'T, ' + str(self._freqavg) + 'F\n' \
                 'Beam ' + str(properties['Beam']) + ': RA ' + properties['RA'] + ', Dec ' + properties['Dec'] + '      ' + properties['File']
-
-
+        
         ax_spectrum.imshow(dedisp_sub, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
-        ax_spectrum.plot(delays, np.arange(dedispchans), linewidth=0.5, alpha=0.5, color='deepskyblue')
-        ax_spectrum.set_title(header, fontsize=10, fontweight='bold')
-        ax_spectrum.set_xlabel('Time [s]', fontsize=9)
-        ax_spectrum.set_ylabel('Frequency [MHz]', fontsize=9)
+        ax_spectrum.plot(delays, np.arange(self._dedisp_bands), linewidth=1.0, color='white')
+        ax_spectrum.set_title(header, fontsize=9)
+        ax_spectrum.set_xlabel('Time [s]', fontsize=8)
+        ax_spectrum.set_ylabel('Freq [MHz]', fontsize=8)
         ax_spectrum.set_xticks(avg_time_pos)
         ax_spectrum.set_xticklabels(avg_time_label_str, fontsize=8)
         ax_spectrum.set_yticks(avg_freq_pos)
         ax_spectrum.set_yticklabels(avg_freq_label_str, fontsize=8)        
 
+        '''
         sub_spectrum = np.sum(dedisp_sub, axis=1)
-
         ax_band.plot(sub_spectrum, np.arange(sub_spectrum.shape[0]), color='black', linewidth=0.75)
         ax_band.invert_yaxis()
         ax_band.yaxis.set_label_position("right")
         ax_band.yaxis.tick_right()
-        ax_band.set_title('Bandpass', fontsize=9)
+        ax_band.set_title('Bandpass', fontsize=8)
         ax_band.set_yticks(avg_freq_pos)
         ax_band.set_yticklabels(avg_freq_label_str, fontsize=8)
-        
+        '''
 
-        dedisp_time_pos = np.linspace(0, dedisp_full.shape[0], num=9)
+        dedisp_time_pos = np.linspace(0, dedisp_full.shape[0], num=5)
         dedisp_time_label = dedisp_time_pos * self._tsamp + self._plot_pad_s + (properties['MJD'] - filmjd) * 86400.0
         dedisp_time_label = dedisp_time_pos * self._tsamp + skip_samples * self._tsamp + ((properties['MJD'] - filmjd) * 86400 - self._plot_pad_s)        
         dedisp_time_label_str = [fmt(label) for label in dedisp_time_label]
@@ -506,26 +522,25 @@ class Plotter:
         ax_dedisp.imshow(dedisp_not_sum, interpolation='none', vmin=cbottom, vmax=ctop, aspect='auto', cmap=cmap)
         ax_dedisp.set_xticks(dedisp_time_pos)
         ax_dedisp.set_xticklabels(dedisp_time_label_str, fontsize=8)
-        ax_dedisp.set_xlabel('Time [s]', fontsize=9)
+        ax_dedisp.set_xlabel('Time [s]', fontsize=8)
         ax_dedisp.set_yticks(avg_freq_pos)
-        ax_dedisp.set_ylabel('Frequency [MHz]', fontsize=9)
+        ax_dedisp.set_ylabel('Freq [MHz]', fontsize=8)
         ax_dedisp.set_yticklabels(avg_freq_label_str, fontsize=8)
 
-        dedisp_norm_pos = [0.0, 0.25, 0.5, 0.75, 1.0]
+        dedisp_norm_pos = [0.0, 0.5, 1.0]
         dedisp_norm_label_sr = [fmt(label) for label in dedisp_norm_pos]
 
         norm_factor = np.max(dedisp_full[:])
         dedisp_full = dedisp_full / norm_factor
 
-        ax_time.plot(dedisp_full[:], linewidth=0.4, color='black')
-        ax_time.axvline(int(dedisp_full.shape[0] / 2), color='deepskyblue', linewidth=0.5)
+        ax_time.plot(dedisp_full[:], linewidth=1.0, color='grey')
         ax_time.set_ylim()
         ax_time.set_xticks(dedisp_time_pos)
         ax_time.set_xticklabels(dedisp_time_label_str)
-        ax_time.set_xlabel('Time [s]', fontsize=9)
+        ax_time.set_xlabel('Time [s]', fontsize=8)
         ax_time.set_yticks(dedisp_norm_pos)
         ax_time.set_yticklabels(dedisp_norm_label_sr)
-        ax_time.set_ylabel('Normalised power')
+        ax_time.set_ylabel('Norm power', fontsize=8)
         
         if (np.sum(dedisp_full) == 0):
             ax_time.text(0.5, 0.6, 'Not dedispersed properly - please report!', fontsize=14, weight='bold', color='firebrick',  horizontalalignment='center', verticalalignment='center', transform=ax_time.transAxes)
@@ -535,8 +550,13 @@ class Plotter:
         else:
             plotdir = os.path.join(self._outdir, 'beam0' + str(nodebeam), 'Plots')
 
+        prep_end = time.time()
+        prep_elapsed = prep_end - prep_start
+
+        print("Preparing plot took %.4fs" % (prep_elapsed))
+
         save_start = time.time()
-        fil_fig.savefig(os.path.join(plotdir, str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.jpg'), bbox_inches = 'tight', quality=95)
+        fil_fig.savefig(os.path.join(plotdir, str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.jpg'), bbox_inches = 'tight', quality=85)
         plt.close(fil_fig)
         save_end = time.time()
         if (self._verbose):
@@ -562,7 +582,7 @@ class Watcher:
         self._nbeams = 6
         self._header_names = ['MJD', 'DM', 'Width', 'SNR']
         self._start_time = time.time()
-        self._mjd_pad = config['window_size'] / 86400.0
+        self._mjd_pad = config['window_size'] * mjd_scale
         self._beam_info = pd.DataFrame()
         
         self._plot_length = 120.0 # how many seconds of data to plot
