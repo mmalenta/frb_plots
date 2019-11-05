@@ -41,7 +41,9 @@ class Plotter:
         self._timeavg = 16
         self._freqavg = 32
         self._outdir = config['base_dir']
-        self._time_width = 8 # How many time samples we want to have across the averaged profile
+        #self._time_width = 8 # How many time samples we want to have across the averaged profile
+        # Check whether we wanted 8 or 4 - I am a bit confused now
+        self._time_width = 4 # How many time samples we want to have across the averaged profile
 
         # .spccl plots parameters
         # Plot last 120 seconds of data
@@ -59,116 +61,6 @@ class Plotter:
         self._plot_pad_s = 0 #self._filfile_pad_s / 2.0
         self._dedisp_bands = 0
 
-    '''def Dedisperse(self, inputdata, filmjd, properties, outbands):
-    
-        dm_start = time.time()
-        dm = properties['DM']
-        candmjd = properties['MJD']
-        perband = int(self._nchans / outbands)
-        original_data_length = inputdata.shape[1]
-        filfile_padding_samples = int(np.floor(self._filfile_pad_s / self._tsamp))
-        plot_padding_samples = int(np.floor(self._plot_pad_s / self._tsamp))
-        plot_padding_mjd = self._plot_pad_s / 86400.0
-        cand_samples_from_start = int(np.ceil((candmjd - filmjd) * 86400.0 / self._tsamp))
-
-        output_samples_sub = 0
-        output_samples_full = 0
-        plot_skip_samples = 0
-        start_padding_added = 0
-
-        last_band_top = self._ftop + (outbands - 1) * perband * self._fband
-        last_band_bottom = last_band_top + perband * self._fband
-        full_delay_samples = int(np.ceil(self._disp_const * dm / self._tsamp))
-        last_band_delay_samples = int(np.ceil(4.15e+03 * dm * (1.0 / (last_band_bottom * last_band_bottom) - 1.0 / (last_band_top * last_band_top)) / self._tsamp))
-
-        # There are 4(5) cases in general (if everything is extracted correctly):
-        ## 1. Not enough padding at the start of the file (candidate was early enough in the file that there is no full padding)
-        ## 2. Enough padding on both sides
-        ## 3. Not enough samples at the end of the file (these can really be combined into one check)
-        ### a. Just part of the padding missing
-        ### b. Whole padding and part of the actual candidate data missing
-        ## 4. Not enough padding to cover the sweep in the last band
-        # If we have case 2 - we are good
-        # Cases 1 and 3 can appear together with how the candidates are extracted at the moment
-        # Case 4 definitely appears in case 3, but can also appear in case 2
-        
-        # TODO: Need to create a single, larger array, which includes all the padding and insert the data into that
-        # That should be faster than appending the zeros array at the start and the end
-        zero_padding_samples_start = 0
-        zero_padding_samples_end = 0
-        input_file_samples = inputdata.shape[1]
-        total_data_samples = 0
-
-        # We have case 1 - add extra 0 padding at the start
-        if ((candmjd - plot_padding_mjd) < filmjd):
-            actualpad = (candmjd - filmjd)
-            zero_padding_samples_start = int(np.ceil((plot_padding_mjd - actualpad) * 86400.0 / self._tsamp))
-            start_padding_added = zero_padding_samples_start
-            if (self._verbose):
-                print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples_start))
-
-        # We have case 3 - add extra 0 padding at the end
-        if ((start_padding_added + cand_samples_from_start + full_delay_samples + plot_padding_samples) > inputdata.shape[1]):
-            zero_padding_samples_end = (start_padding_added + cand_samples_from_start + full_delay_samples + plot_padding_samples) - inputdata.shape[1]
-            if (self._verbose):
-                print("Not enough data at the end. Padding with %d extra samples" % (zero_padding_samples_end))
-
-        # How many samples to skip from start of the data block
-        # If not padding was added, then the whole expression should be just candidate start time shifted by padding from the start of the file
-        # If padding was added, the whole expression should give 0
-        plot_skip_samples = cand_samples_from_start - plot_padding_samples + start_padding_added
-
-        # We have case 4 - add extra 0 padding at the end
-        # We only have to worry about the extra delay when we do a subband dedispersion
-        if (last_band_delay_samples > plot_padding_samples):
-            zero_padding_samples_end = zero_padding_samples_end + int(last_band_delay_samples - plot_padding_samples)
-            if (self._verbose):
-                print("Adding extra zero padding of %d time samples to account for last band dispersion" % (zero_padding_samples_end))
-        
-        total_data_samples = zero_padding_samples_start + zero_padding_samples_end + input_file_samples
-
-        full_data = np.zeros((self._nchans, total_data_samples))
-        full_data[:, zero_padding_samples_start : zero_padding_samples_start + input_file_samples] = inputdata
-
-        # Full dedispersion: padding on both sides
-        # Currently ignores the pulse width
-        output_samples_full = int(np.ceil(2 * plot_padding_samples))
-        # Subband dedispersion: padding on both sides + extra DM sweep
-        output_samples_sub = int(np.ceil(2 * plot_padding_samples)) + full_delay_samples - last_band_delay_samples
-
-        if (self._verbose):
-            print("Candidate plotting:")
-
-            print("\tInput data length (original): %d" % (original_data_length))
-            print("\tInput data length (with all padding included): %d" % (inputdata.shape[1]))
-            print("\tNumber of dedispersed subbands: %d" % (outbands))
-            print("\tOutput plot samples: %d (subband), %d (full)" % (output_samples_sub, output_samples_full))
-            print("\tDM sweep samples: %d" % (full_delay_samples))
-            print("\tPadding at the start: %d" % (start_padding_added))
-            print("\tSamples skipped at the start: %d" % (plot_skip_samples))
-
-        dedispersed_sub = np.zeros((outbands, output_samples_sub))
-        dedispersed_not_sum = np.zeros((outbands, output_samples_full))
-        dedispersed_full = np.zeros((1, output_samples_full))
-
-        for band in np.arange(outbands):
-            bandtop = self._ftop + band * perband * self._fband
-            for chan in np.arange(perband):
-                chanfreq = bandtop + chan * self._fband
-                delay_sub = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop)) / self._tsamp))
-                dedispersed_sub[band, :] = np.add(dedispersed_sub[band, :], full_data[chan + band * perband, int(plot_skip_samples) + delay_sub : int(plot_skip_samples) + delay_sub + output_samples_sub])
-                delay_full = int(np.ceil(4.15e+03 * dm * (1.0 / (chanfreq * chanfreq) - 1.0 / (self._ftop * self._ftop)) / self._tsamp))
-                dedisp_chunk = full_data[chan + band * perband, int(plot_skip_samples) + delay_full : int(plot_skip_samples) + delay_full + output_samples_full]
-                dedispersed_full[0, :] = np.add(dedispersed_full[0, :], dedisp_chunk)
-                dedispersed_not_sum[band, :] = np.add(dedispersed_not_sum[band, :], dedisp_chunk)
-
-        dm_end = time.time()
-        
-        if (self._verbose):
-            print("Dedispersion took %.2fs" % (dm_end - dm_start))
-
-        return dedispersed_sub, dedispersed_not_sum, dedispersed_full, start_padding_added
-'''
     def PadData(self, inputdata, fil_mjd, properties, outbands):
 
         '''
@@ -330,7 +222,8 @@ class Plotter:
         padded_input_data[:, zero_padding_samples_start : zero_padding_samples_start + original_data_length] = inputdata
         
         input_samples = int(2 * plot_padding_samples + full_band_delay_samples + last_band_delay_samples)
-        use_data = np.copy(padded_input_data[:, plot_skip_samples : plot_skip_samples + input_samples])
+        # use_data = np.copy(padded_input_data[:, plot_skip_samples : plot_skip_samples + input_samples])
+        use_data = padded_input_data[:, plot_skip_samples : plot_skip_samples + input_samples]
 
         return use_data, input_samples, output_samples_full_dedisp, output_samples_sub_dedisp, start_padding_added
 
