@@ -210,7 +210,7 @@ class Plotter:
         output_samples_sub_dedisp = int(2 * plot_padding_samples + full_band_delay_samples - last_band_delay_samples)
 
         total_data_samples = zero_padding_samples_start + zero_padding_samples_end + original_data_length
-        plot_skip_samples = cand_samples_from_start - plot_padding_samples + start_padding_added
+        plot_skip_samples = max(cand_samples_from_start - plot_padding_samples + start_padding_added, 0)
 
         print("Candidate padding:")
         print("\tInput data length (original): %d" % (original_data_length))
@@ -219,7 +219,6 @@ class Plotter:
         print("\tPadding at the start: %d" % (start_padding_added))
         print("\tSamples skipped at the start: %d" % (plot_skip_samples))
         print("\tDelay across the last band: %d" %(last_band_delay_samples))
-
 
         padded_input_data = np.zeros((self._nchans, total_data_samples), dtype=np.float32)
         padded_input_data[:, zero_padding_samples_start : zero_padding_samples_start + original_data_length] = inputdata
@@ -311,13 +310,6 @@ class Plotter:
 
             centre_band = self._ftop + iband * self._avg_fband + (self._dedisp_bands / 2.0) * self._fband
             cpu_inter_band_delays[int(iband)] =  int(np.ceil(scaling * (1.0 / (centre_band * centre_band) - ftop_part)))
-
-        '''for delay in cpu_sub_delays:
-            print(delay)
-
-        for delay in cpu_band_delays:
-            print(delay)
-        '''
 
         SubDedispGPU = cp.RawKernel(r'''
         
@@ -464,14 +456,16 @@ class Plotter:
         fil_fig.tight_layout(h_pad=3.25, rect=[0, 0.03, 1, 0.95])
 
         plot_area = gs.GridSpec(2, 1)
-        top_area = gs.GridSpecFromSubplotSpec(1, 1, subplot_spec=plot_area[0])
+        top_area = gs.GridSpecFromSubplotSpec(1, 5, subplot_spec=plot_area[0])
+        #top_area = gs.GridSpecFromSubplotSpec(1, 1, subplot_spec=plot_area[0])
         bottom_area = gs.GridSpecFromSubplotSpec(1, 2, subplot_spec=plot_area[1])
 
-        ax_spectrum = plt.Subplot(fil_fig, top_area[0])
+        #ax_spectrum = plt.Subplot(fil_fig, top_area[0])
+        ax_spectrum = plt.Subplot(fil_fig, top_area[0, :-1])
         fil_fig.add_subplot(ax_spectrum)
 
-        #ax_band = plt.Subplot(fil_fig, top_area[0, -1])
-        #fil_fig.add_subplot(ax_band)
+        ax_band = plt.Subplot(fil_fig, top_area[0, -1])
+        fil_fig.add_subplot(ax_band)
 
         ax_dedisp = plt.Subplot(fil_fig, bottom_area[0])
         fil_fig.add_subplot(ax_dedisp)
@@ -498,7 +492,7 @@ class Plotter:
         ax_spectrum.set_yticks(avg_freq_pos)
         ax_spectrum.set_yticklabels(avg_freq_label_str, fontsize=8)        
 
-        '''
+        
         sub_spectrum = np.sum(dedisp_sub, axis=1)
         ax_band.plot(sub_spectrum, np.arange(sub_spectrum.shape[0]), color='black', linewidth=0.75)
         ax_band.invert_yaxis()
@@ -507,7 +501,7 @@ class Plotter:
         ax_band.set_title('Bandpass', fontsize=8)
         ax_band.set_yticks(avg_freq_pos)
         ax_band.set_yticklabels(avg_freq_label_str, fontsize=8)
-        '''
+        
 
         dedisp_time_pos = np.linspace(0, dedisp_full.shape[0], num=5)
         dedisp_time_label = dedisp_time_pos * self._tsamp + self._plot_pad_s + (properties['MJD'] - filmjd) * 86400.0
