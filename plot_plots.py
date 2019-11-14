@@ -651,7 +651,7 @@ class Watcher:
 
             for ibeam in beams:
 
-                beam_dir = os.path.join(config['base_dir'], 'beam0' + str(ibeam))
+                beam_dir = os.path.join(config['base_dir'], 'beam' + "{:02}".format(ibeam)
                 new_fil_files = []
 
                 if os.path.isdir(beam_dir):
