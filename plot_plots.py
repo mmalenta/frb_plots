@@ -1,3 +1,7 @@
+# What is run all the time to test the code
+# python3 plot_plots.py -s -t -v -m 2019-09-29_11\:10\:11/channel_mask.dat -e 2019-09-29_11\:10\:11/pipeline_events.log -d 2019-09-29_11\:10\:11/
+
+
 import matplotlib
 matplotlib.use('Agg')
 
@@ -168,10 +172,8 @@ class Plotter:
         # This ensures we can have an integer number of threadblocks in the time dimension
         dm = properties['DM']
         cand_mjd = properties['MJD']
-        per_band = self._freqavg
         original_data_length = inputdata.shape[1]
         plot_padding_samples = int(np.ceil(self._plot_pad_s * self._tsamp_scaling / thread_x) * thread_x)
-        plot_padding_mjd = self._plot_pad_s * mjd_scale
         cand_samples_from_start = int(np.ceil((cand_mjd - fil_mjd) * 86400.0 * self._tsamp_scaling))
 
         # Dispersive delay in seconds across the entire band
@@ -192,9 +194,11 @@ class Plotter:
         start_padding_added = 0
 
         # We don't have enough samples to cover padding at the start
-        if ((cand_mjd - plot_padding_mjd) < fil_mjd):
+        #if ((cand_mjd - plot_padding_mjd) < fil_mjd):
+        if (cand_samples_from_start < plot_padding_samples):
             # Difference in samples (plot padding is now a multiple of the threadblock time dimension, so extra data padding takes this into account)
-            zero_padding_samples_start = plot_padding_samples - int(np.floor((cand_mjd - fil_mjd) * 86400.0 * self._tsamp_scaling))
+            #zero_padding_samples_start = plot_padding_samples - int(np.floor((cand_mjd - fil_mjd) * 86400.0 * self._tsamp_scaling))
+            zero_padding_samples_start = plot_padding_samples - cand_samples_from_start
             start_padding_added = zero_padding_samples_start
             if (self._verbose):
                 print("Not enough data at the start. Padding with %d extra samples" % (zero_padding_samples_start))
@@ -212,13 +216,16 @@ class Plotter:
         total_data_samples = zero_padding_samples_start + zero_padding_samples_end + original_data_length
         plot_skip_samples = max(cand_samples_from_start - plot_padding_samples + start_padding_added, 0)
 
-        print("Candidate padding:")
-        print("\tInput data length (original): %d" % (original_data_length))
-        print("\tOutput plot samples: %d (subband), %d (full)" % (output_samples_sub_dedisp, output_samples_full_dedisp))
-        print("\tDM sweep samples: %d" % (full_band_delay_samples))
-        print("\tPadding at the start: %d" % (start_padding_added))
-        print("\tSamples skipped at the start: %d" % (plot_skip_samples))
-        print("\tDelay across the last band: %d" %(last_band_delay_samples))
+        if (self._verbose):
+            print("Candidate padding:")
+            print("\tInput data length (original): %d" % (original_data_length))
+            print("\tOutput plot samples: %d (subband), %d (full)" % (output_samples_sub_dedisp, output_samples_full_dedisp))
+            print("\tDM: %.2f" % (dm))
+            print("\tDM sweep seconds: %.6f" % (full_band_delay_seconds))
+            print("\tDM sweep samples: %d" % (full_band_delay_samples))
+            print("\tPadding at the start: %d" % (start_padding_added))
+            print("\tSamples skipped at the start: %d" % (plot_skip_samples))
+            print("\tDelay across the last band: %d" %(last_band_delay_samples))
 
         padded_input_data = np.zeros((self._nchans, total_data_samples), dtype=np.float32)
         padded_input_data[:, zero_padding_samples_start : zero_padding_samples_start + original_data_length] = inputdata
@@ -305,11 +312,11 @@ class Plotter:
             for ichan in np.arange(self._freqavg):
                 full_chan = iband * self._freqavg + ichan
                 chanfreq = bandtop + ichan * self._fband
-                cpu_intra_band_delays[full_chan] =  int(np.ceil(scaling * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop))))
-                delays[iband] = int(np.ceil(scaling *  (1.0 / (chanfreq * chanfreq) - ftop_part)) + offset)
+                cpu_intra_band_delays[full_chan] =  int(np.round(scaling * (1.0 / (chanfreq * chanfreq) - 1.0 / (bandtop * bandtop))))
+                delays[iband] = int(np.round(scaling *  (1.0 / (chanfreq * chanfreq) - ftop_part)) + offset)
 
-            centre_band = self._ftop + iband * self._avg_fband + (self._dedisp_bands / 2.0) * self._fband
-            cpu_inter_band_delays[int(iband)] =  int(np.ceil(scaling * (1.0 / (centre_band * centre_band) - ftop_part)))
+            centre_band = self._ftop + iband * self._avg_fband# + (self._dedisp_bands / 2.0) * self._fband
+            cpu_inter_band_delays[int(iband)] =  int(np.round(scaling * (1.0 / (centre_band * centre_band) - ftop_part)))
 
         SubDedispGPU = cp.RawKernel(r'''
         
@@ -425,10 +432,11 @@ class Plotter:
         dedisp_end = time.time()
         dedisp_elapsed = dedisp_end - dedisp_start
 
-        print("Dedispersion took %.4fs" % (dedisp_elapsed))
-        print("Kernels took %.4fs" % (kernel_elapsed))
-        print("Sub kernel took %.4fs" % (sub_kernel_elapsed))
-        print("Full kernel took %.4fs" % (full_elapsed))
+        if (self._verbose):
+            print("Dedispersion took %.4fs" % (dedisp_elapsed))
+            print("Kernels took %.4fs" % (kernel_elapsed))
+            print("Sub kernel took %.4fs" % (sub_kernel_elapsed))
+            print("Full kernel took %.4fs" % (full_elapsed))
 
         prep_start = time.time()
 
@@ -547,7 +555,8 @@ class Plotter:
         prep_end = time.time()
         prep_elapsed = prep_end - prep_start
 
-        print("Preparing plot took %.4fs" % (prep_elapsed))
+        if (self._verbose):
+            print("Preparing plot took %.4fs" % (prep_elapsed))
 
         save_start = time.time()
         fil_fig.savefig(os.path.join(plotdir, str(properties['MJD']) + '_DM_' + fmtdm + '_beam_' + str(ibeam) + '.jpg'), bbox_inches = 'tight', quality=85)
@@ -573,7 +582,6 @@ class Watcher:
         self._beam_skip = False
         self._nchans = 4096
         self._headsize = 136
-        self._nbeams = 6
         self._header_names = ['MJD', 'DM', 'Width', 'SNR']
         self._start_time = time.time()
         self._mjd_pad = config['window_size'] * mjd_scale
@@ -616,7 +624,6 @@ class Watcher:
 
     def GetNewFilFiles(self, procid, config):
     
-        verbose = config['verbose']
         beams = config['beams']
         single_pass = config['single_pass']
         beam_info = config['beam_info']
@@ -624,14 +631,14 @@ class Watcher:
         header_names = config['header_names']
         fil_header_size = config['fil_header_size']
 
-        if verbose:
+        if (self._verbose):
             print("%s: Process %d watching for .fil files in beams %s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), procid, beams))
 
         plotter = Plotter(config)
 
         watching = True
 
-        fil_latest = np.zeros(6)
+        fil_latest = np.zeros(self._number_beams)
         new_fil_files = []
         
         waited = 0.0
@@ -658,7 +665,7 @@ class Watcher:
                         new_fil_files.append([ff.name, ff.stat().st_mtime])
 
                 new_len = len(new_fil_files)
-                if (verbose):
+                if (self._verbose):
                     print("%s, beam %d: Found %d new filterbank files" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, new_len))    
 
                 if (new_len > 0):
@@ -672,14 +679,14 @@ class Watcher:
                             if mjdtime > latest_fil_mjd:
                                 latest_fil_mjd = mjdtime
                     
-                    if (verbose):
+                    if (self._verbose):
                         print("%s, beam %d: Latest .fil file MJD %.10f" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, latest_fil_mjd))
 
                     cand_file = glob.glob(beam_dir + '/*.spccl')
                     # Wait until we get the .spccl file - it should be saved at some point
                     if ( not single_pass):
                         while ( (len(cand_file) == 0) and (waited < spccl_wait) ):
-                            if (verbose):
+                            if (self._verbose):
                                 print("%s, beam %d: No .spccl file found yet..." % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
 
                             time.sleep(0.1)
@@ -687,7 +694,7 @@ class Watcher:
                             waited = waited + 0.1
 
                         if (waited >= spccl_wait):
-                            if (verbose):
+                            if (self._verbose):
                                 print("%s, beam %d: WARNING: no walid .spccl file after 5.0s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
                             fil_latest[ibeam] = 0
                             continue
@@ -705,14 +712,14 @@ class Watcher:
                     if (beam_cands.size == 0):
                         if ( not single_pass):
                             while( (beam_cands.size == 0) and (waited < spccl_wait / 2.0) ):
-                                if (verbose):
+                                if (self._verbose):
                                     print("No filled .spccl file for beam %d yet..." % (ibeam))
                                 time.sleep(0.1)
                                 beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=header_names, skiprows=1)
                                 waited = waited + 0.1
                     
                             if (waited >= spccl_wait / 2.0):
-                                if (verbose):
+                                if (self._verbose):
                                     print("%s, beam %d: WARNING: empty .spccl file after 5.0s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
                                 fil_latest[ibeam] = 0
                                 continue
@@ -723,7 +730,7 @@ class Watcher:
                             continue
                         
                     latest_cand_mjd = beam_cands.tail(1)['MJD'].values[0]
-                    if (verbose):
+                    if (self._verbose):
                         print("%s, beam %d: Latest candidate MJD: %.10f" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, latest_cand_mjd))
 
                     waited = 0.0
@@ -734,12 +741,12 @@ class Watcher:
                             beam_cands = pd.read_csv(cand_file[0], sep='\s+', names=header_names, skiprows=1)
                             latest_cand_mjd = beam_cands.tail(1)['MJD'].values[0]
                             waited = waited + 0.1
-                            if (verbose):
+                            if (self._verbose):
                                 print("%s, beam %d: Waiting for an updated .spccl file..." % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
                                 print("%s, beam %d: Latest candidate MJD: %.10f" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, latest_cand_mjd))
 
                         if (waited >= spccl_wait / 2.0):
-                            if (verbose):
+                            if (self._verbose):
                                 print("%s, beam %d: WARNING: no up-to-date candidates in the .spccl file." % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam))
                             fil_latest[ibeam] = 0
                             continue
@@ -753,7 +760,7 @@ class Watcher:
 
                     # At this stage we can be sure there are valid candidates for a given beam
                     for new_ff in new_fil_files:
-                        if (verbose):
+                        if (self._verbose):
                             print("%s, beam %d: Finding a match for file %s" % (time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()), ibeam, new_ff[0]))
                         
                         with open(os.path.join(beam_dir, new_ff[0]), mode='rb') as file:
@@ -767,7 +774,7 @@ class Watcher:
 
                         if (selected.shape[0] > 0):
                             
-                            if self._verbose:
+                            if (self._verbose):
                                 print("Found %d matching candidates" % (selected.shape[0]))
 
                             highest_snr = selected.iloc[selected['SNR'].idxmax()]
@@ -793,7 +800,7 @@ class Watcher:
                             with open(extra_file, 'a') as f:
                                 f.write("%d\t%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (0, highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
                             
-                            if (verbose):
+                            if (self._verbose):
                                 print("\n\n")
 
                         else:
