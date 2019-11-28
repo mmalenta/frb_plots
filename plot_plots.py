@@ -6,6 +6,7 @@ import matplotlib
 matplotlib.use('Agg')
 
 import argparse
+import csv
 import cupy as cp
 import glob
 import json
@@ -548,9 +549,9 @@ class Plotter:
             ax_time.text(0.5, 0.6, 'Not dedispersed properly - please report!', fontsize=14, weight='bold', color='firebrick',  horizontalalignment='center', verticalalignment='center', transform=ax_time.transAxes)
         
         if (self._single_pass):
-            plotdir = os.path.join(self._outdir, 'beam0' + str(nodebeam), 'Plots_single')
+            plotdir = os.path.join(self._outdir, 'beam' + "{:02}".format(nodebeam), 'Plots_single')
         else:
-            plotdir = os.path.join(self._outdir, 'beam0' + str(nodebeam), 'Plots')
+            plotdir = os.path.join(self._outdir, 'beam' + "{:02}".format(nodebeam), 'Plots')
 
         prep_end = time.time()
         prep_elapsed = prep_end - prep_start
@@ -600,7 +601,7 @@ class Watcher:
             print("Creating plots output directory for %d beams" % (self._number_beams))
 
         for ibeam in np.arange(self._number_beams):
-            beamdir = os.path.join(self._directory, 'beam0' + str(ibeam))
+            beamdir = os.path.join(self._directory, 'beam' + "{:02}".format(ibeam))
 
             if os.path.isdir(beamdir):
 
@@ -754,9 +755,11 @@ class Watcher:
                     if (single_pass):
                         extra_file = os.path.join(beam_dir, 'Plots_single/used_candidates.spccl.extra')
                         extra_full_file = os.path.join(beam_dir, 'Plots_single/used_candidates.spccl.extra.full')
+                        fetch_file = os.path.join(beam_dir, 'Plots_single/used_candidates.spccl.fetch')
                     else:
                         extra_file = os.path.join(beam_dir, 'Plots/used_candidates.spccl.extra')
                         extra_full_file = os.path.join(beam_dir, 'Plots/used_candidates.spccl.extra.full')
+                        fetch_file = os.path.join(beam_dir, 'Plots/used_candidates.spccl.fetch')
 
                     # At this stage we can be sure there are valid candidates for a given beam
                     for new_ff in new_fil_files:
@@ -800,6 +803,10 @@ class Watcher:
                             with open(extra_file, 'a') as f:
                                 f.write("%d\t%.10f\t%.4f\t%.4f\t%.2f\t%d\t%s\t%s\t%s\t%s\n" % (0, highest_snr['MJD'], highest_snr['DM'], highest_snr['Width'], highest_snr['SNR'], highest_snr['Beam'], highest_snr['RA'], highest_snr['Dec'], highest_snr['File'], highest_snr['Plot']))
                             
+                            with open(fetch_file, 'a') as f:
+                                cand_writer = csv.writer(f, delimiter=',')
+                                cand_writer.writerow([highest_snr['File'], highest_snr['SNR'], "{:.6f}".format((highest_snr['MJD'] - mjdtime) * 86400.0), highest_snr['DM'], "{:.6f}".format(np.log2(highest_snr['Width']/(tsamp * 1000.0)))])
+
                             if (self._verbose):
                                 print("\n\n")
 
